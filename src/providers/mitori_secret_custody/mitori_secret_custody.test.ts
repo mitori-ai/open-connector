@@ -40,8 +40,8 @@ describe("mitori_secret_custody provider", () => {
 
     expect(result).toEqual({
       profile: {
-        accountId: "mitori_secret_custody:purpose:start-input",
-        displayName: "Mitori Secret Custody",
+        accountId: "custody:start-input",
+        displayName: "Mitori Custody",
         grantedScopes: [],
       },
     });
@@ -85,8 +85,8 @@ describe("mitori_secret_custody provider", () => {
       virtual: false,
       default: false,
       profile: {
-        accountId: "mitori_secret_custody:purpose:start-input",
-        displayName: "Mitori Secret Custody",
+        accountId: "custody:start-input",
+        displayName: "Mitori Custody",
         grantedScopes: [],
       },
     });

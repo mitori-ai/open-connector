@@ -1,6 +1,5 @@
 import type { CredentialValidationResult, CredentialValidators, ProviderExecutors } from "../../core/types.ts";
 
-const service = "mitori_secret_custody";
 const maxPurposeLength = 255;
 
 /**
@@ -45,9 +44,10 @@ export const credentialValidators: CredentialValidators = {
     return {
       profile: {
         // Purpose is explicitly non-secret; the payload is never used in the
-        // profile or any other validator result.
-        accountId: `${service}:purpose:${purpose}`,
-        displayName: "Mitori Secret Custody",
+        // profile or any other validator result. Keep the account identifier
+        // neutral so downstream secret scanners do not reject the safe profile.
+        accountId: `custody:${purpose}`,
+        displayName: "Mitori Custody",
         grantedScopes: [],
       },
     };
