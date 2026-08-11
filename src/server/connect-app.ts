@@ -26,6 +26,7 @@ export interface ConnectAppOptions {
   adminToken?: string;
   runtimeToken?: string;
   allowedCustomOAuth?: string[];
+  allowedOAuthReturnUrlOrigins?: string[];
   verifyRuntimeJwt?: RuntimeJwtVerifier;
   actionPolicy?: ActionPolicyService;
   registerStaticRoutes?: (app: Hono) => void;
@@ -86,6 +87,7 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
       transitFiles: options.transitFiles,
       runtimeTokens,
       runtimePolicyStore: options.runtimeDatabase.runtimePolicyStore,
+      allowedOAuthReturnUrlOrigins: options.allowedOAuthReturnUrlOrigins,
       registerStaticRoutes: options.registerStaticRoutes,
       auth: {
         adminToken: options.adminToken,

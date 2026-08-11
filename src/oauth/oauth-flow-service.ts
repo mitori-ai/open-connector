@@ -16,11 +16,13 @@ import { requestAuthorizationCodeToken } from "./oauth-token.ts";
 export type OAuthAuthorizationStart = {
   authorizationUrl: string;
   state: string;
+  returnUrl?: string;
 };
 
 export interface OAuthAuthorizationStartInput {
   service: string;
   connectionName?: string;
+  returnUrl?: string;
   clientConfig?: OAuthClientConfigInput;
 }
 
@@ -39,6 +41,8 @@ export interface OAuthAuthorizationState {
   createdAt: string;
   pkceCodeVerifier?: string;
   clientConfig?: OAuthClientConfig;
+  /** Exact allowlisted completion URL bound to this one-time state. */
+  returnUrl?: string;
 }
 
 export interface OAuthFlowServiceOptions {
@@ -79,7 +83,7 @@ export class OAuthFlowService {
   }
 
   async startAuthorization(input: OAuthAuthorizationStartInput): Promise<OAuthAuthorizationStart> {
-    const { service, connectionName } = input;
+    const { service, connectionName, returnUrl } = input;
     this.connections.assertProviderAvailable(service);
     const auth = this.clientConfigs.getOAuthDefinition(service);
     const config = input.clientConfig
@@ -98,6 +102,7 @@ export class OAuthFlowService {
       createdAt: new Date().toISOString(),
       pkceCodeVerifier,
       clientConfig: input.clientConfig ? config : undefined,
+      returnUrl,
     });
 
     const authorizationUrl = new URL(this.clientConfigs.resolveEndpointUrl(service, auth.authorizationUrl, config));
@@ -125,64 +130,69 @@ export class OAuthFlowService {
       authorizationUrl.searchParams.set("code_challenge_method", auth.pkce?.method ?? "S256");
     }
 
-    return {
-      authorizationUrl: authorizationUrl.toString(),
-      state,
-    };
+    return { authorizationUrl: authorizationUrl.toString(), state, returnUrl };
   }
 
-  async completeAuthorization(input: OAuthAuthorizationCompleteInput): Promise<{ service: string; connected: true }> {
-    const pending = await this.states.take(input.state);
-    if (!pending) {
-      throw new OAuthFlowError("invalid_oauth_state", "OAuth state is missing or expired.");
+  async consumeAuthorizationState(state: string): Promise<OAuthAuthorizationState> {
+    const pending = await this.states.take(state);
+    if (!pending || isExpiredOAuthState(pending, this.stateMaxAgeMs)) {
+      throw new OAuthFlowError("invalid_oauth_state", "OAuth state is missing or expired.", pending);
     }
-    if (isExpiredOAuthState(pending, this.stateMaxAgeMs)) {
-      throw new OAuthFlowError("invalid_oauth_state", "OAuth state is missing or expired.");
-    }
+    return pending;
+  }
 
-    const auth = this.clientConfigs.getOAuthDefinition(pending.service);
-    const config = pending.clientConfig ?? (await this.clientConfigs.getConfig(pending.service));
-    if (!config) {
-      throw new OAuthFlowError(
-        "oauth_client_config_required",
-        `Configure an OAuth client for ${pending.service} first.`,
-      );
-    }
+  async completeAuthorization(
+    input: OAuthAuthorizationCompleteInput,
+  ): Promise<{ service: string; connected: true; returnUrl?: string }> {
+    const pending = await this.consumeAuthorizationState(input.state);
+    try {
+      const auth = this.clientConfigs.getOAuthDefinition(pending.service);
+      const config = pending.clientConfig ?? (await this.clientConfigs.getConfig(pending.service));
+      if (!config) {
+        throw new OAuthFlowError(
+          "oauth_client_config_required",
+          `Configure an OAuth client for ${pending.service} first.`,
+        );
+      }
 
-    let tokenResponse = await requestAuthorizationCodeToken({
-      code: input.code,
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      redirectUri: this.clientConfigs.expectedRedirectUri(pending.service),
-      responseEnvelope: auth.tokenResponseEnvelope,
-      tokenRequestFields: auth.tokenRequestFields,
-      tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
-      tokenRequestFormat: auth.tokenRequestFormat,
-      tokenUrl: this.clientConfigs.resolveEndpointUrl(pending.service, auth.tokenUrl, config),
-      extraFields: createTokenExtraFields(pending),
-      createError: (message) => new OAuthFlowError("oauth_token_exchange_failed", message),
-    });
-    if (pending.service == "slack") {
-      // Slack returns a separately rotated user grant in `authed_user`.
-      // Move it out of non-secret metadata before storing the credential.
-      tokenResponse = normalizeSlackAuthorizationCredential(tokenResponse);
-    }
-    const oauthCredential = {
-      ...tokenResponse,
-      metadata: {
-        ...tokenResponse.metadata,
-        oauthClientId: config.clientId,
-        oauthClientExtra: config.extra,
-        oauthClientSecretExtra: config.secretExtra,
-        oauthClientConfig: pending.clientConfig ? config : undefined,
-      },
-    };
+      let tokenResponse = await requestAuthorizationCodeToken({
+        code: input.code,
+        clientId: config.clientId,
+        clientSecret: config.clientSecret,
+        redirectUri: this.clientConfigs.expectedRedirectUri(pending.service),
+        responseEnvelope: auth.tokenResponseEnvelope,
+        tokenRequestFields: auth.tokenRequestFields,
+        tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
+        tokenRequestFormat: auth.tokenRequestFormat,
+        tokenUrl: this.clientConfigs.resolveEndpointUrl(pending.service, auth.tokenUrl, config),
+        extraFields: createTokenExtraFields(pending),
+        createError: (message) => new OAuthFlowError("oauth_token_exchange_failed", message, pending),
+      });
+      if (pending.service === "slack") {
+        tokenResponse = normalizeSlackAuthorizationCredential(tokenResponse);
+      }
+      const oauthCredential = {
+        ...tokenResponse,
+        metadata: {
+          ...tokenResponse.metadata,
+          oauthClientId: config.clientId,
+          oauthClientExtra: config.extra,
+          oauthClientSecretExtra: config.secretExtra,
+          oauthClientConfig: pending.clientConfig ? config : undefined,
+        },
+      };
 
-    await this.connections.setOAuthCredential(pending.service, oauthCredential, pending.connectionName);
-    return {
-      service: pending.service,
-      connected: true,
-    };
+      await this.connections.setOAuthCredential(pending.service, oauthCredential, pending.connectionName);
+      return { service: pending.service, connected: true, returnUrl: pending.returnUrl };
+    } catch (error) {
+      if (error instanceof OAuthFlowError) {
+        throw error.returnUrl === pending.returnUrl ? error : new OAuthFlowError(error.code, error.message, pending);
+      }
+      if (error instanceof Error && "code" in error && typeof error.code === "string") {
+        throw new OAuthFlowError(error.code, error.message, pending);
+      }
+      throw error;
+    }
   }
 
   private resolveCustomClientConfig(service: string, input: OAuthClientConfigInput): OAuthClientConfig {
@@ -245,9 +255,11 @@ function encodeBase64Url(value: Uint8Array): string {
  */
 export class OAuthFlowError extends Error {
   readonly code: string;
+  readonly returnUrl?: string;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, state?: OAuthAuthorizationState) {
     super(message);
     this.code = code;
+    this.returnUrl = state?.returnUrl;
   }
 }

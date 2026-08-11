@@ -3,10 +3,6 @@ import { escapeHtml } from "./http-utils.ts";
 const oauthCompletionChannelName = "oomol-connect-oauth";
 const oauthCompletedType = "oauth.completed";
 
-// Client-side translations. English is also the server-rendered default in the
-// markup below, so the page stays meaningful without JavaScript. `bodyBefore`
-// and `bodyAfter` wrap the (already-escaped) service <code> element, which the
-// script never rewrites, so no service value is ever injected as HTML.
 const oauthCompletionStrings = {
   en: {
     badge: "Connected",
@@ -46,133 +42,51 @@ const oauthCompletionStrings = {
   },
 };
 
-export function renderOAuthCompletionPage(service: string): string {
-  const payload = scriptJson({
-    type: oauthCompletedType,
-    service,
-  });
+type OAuthCompletionPageOptions = {
+  ok?: boolean;
+  message?: string;
+  returnUrl?: string;
+};
+
+export function renderOAuthCompletionPage(service: string, options: OAuthCompletionPageOptions = {}): string {
+  const ok = options.ok ?? true;
+  const payload = scriptJson({ type: oauthCompletedType, service, ok });
   const escapedService = escapeHtml(service);
+  const escapedMessage = options.message ? escapeHtml(options.message) : undefined;
+  const returnLink = options.returnUrl
+    ? `<a class="button" href="${escapeHtml(options.returnUrl)}">Return to application</a>`
+    : "";
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connected ${escapedService}</title>
+<title>${ok ? "Connected" : "OAuth incomplete"} ${escapedService}</title>
 <style>
-:root {
-  --background: hsl(0 0% 100%);
-  --foreground: hsl(222.2 84% 4.9%);
-  --card: hsl(0 0% 100%);
-  --card-foreground: hsl(222.2 84% 4.9%);
-  --muted: hsl(210 40% 96.1%);
-  --muted-foreground: hsl(215.4 16.3% 46.9%);
-  --border: hsl(214.3 31.8% 91.4%);
-  --primary: hsl(222.2 47.4% 11.2%);
-  --primary-foreground: hsl(210 40% 98%);
-  --ring: hsl(222.2 84% 4.9%);
-}
-* {
-  box-sizing: border-box;
-}
-body {
-  min-height: 100vh;
-  margin: 0;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: var(--background);
-  color: var(--foreground);
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-.card {
-  width: min(100%, 420px);
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--card);
-  color: var(--card-foreground);
-  box-shadow: 0 1px 2px hsl(222.2 84% 4.9% / 0.04), 0 12px 32px hsl(222.2 84% 4.9% / 0.08);
-}
-.header {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.badge {
-  width: fit-content;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 2px 10px;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 20px;
-}
-h1 {
-  margin: 0;
-  font-size: 20px;
-  line-height: 28px;
-  font-weight: 600;
-}
-p {
-  margin: 0;
-  color: var(--muted-foreground);
-  font-size: 14px;
-  line-height: 22px;
-}
-code {
-  border-radius: 6px;
-  background: var(--muted);
-  padding: 2px 6px;
-  color: var(--foreground);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 13px;
-}
-.actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 24px;
-}
-.button {
-  appearance: none;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  color: var(--foreground);
-  padding: 8px 14px;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
-  cursor: pointer;
-}
-.button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-.button:hover {
-  background: var(--muted);
-}
-.close-note {
-  font-size: 12px;
-  line-height: 18px;
-}
+:root { --background: hsl(0 0% 100%); --foreground: hsl(222.2 84% 4.9%); --muted: hsl(210 40% 96.1%); --muted-foreground: hsl(215.4 16.3% 46.9%); --border: hsl(214.3 31.8% 91.4%); --primary: hsl(222.2 47.4% 11.2%); --primary-foreground: hsl(210 40% 98%); --ring: hsl(222.2 84% 4.9%); }
+* { box-sizing: border-box; }
+body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: var(--background); color: var(--foreground); font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.card { width: min(100%, 420px); padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--background); box-shadow: 0 12px 32px hsl(222.2 84% 4.9% / 0.08); }
+.header { display: flex; flex-direction: column; gap: 8px; }
+.badge { width: fit-content; display: inline-flex; border-radius: 999px; padding: 2px 10px; background: var(--primary); color: var(--primary-foreground); font-size: 12px; font-weight: 600; line-height: 20px; }
+h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
+p { margin: 0; color: var(--muted-foreground); font-size: 14px; line-height: 22px; }
+code { border-radius: 6px; background: var(--muted); padding: 2px 6px; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 13px; }
+.actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+.button { display: inline-block; appearance: none; border: 1px solid var(--border); border-radius: 8px; background: var(--background); color: var(--foreground); padding: 8px 14px; font: inherit; font-size: 14px; font-weight: 500; line-height: 20px; cursor: pointer; text-decoration: none; }
+.button:hover { background: var(--muted); }
+.close-note { width: 100%; font-size: 12px; line-height: 18px; }
 </style>
 </head>
 <body>
 <main class="card" role="status" aria-live="polite">
   <div class="header">
-    <span class="badge" data-t="badge">Connected</span>
-    <h1 data-t="title">Connection ready</h1>
-    <p><span data-t="bodyBefore">OAuth finished for </span><code>${escapedService}</code><span data-t="bodyAfter">. Return to OOMOL Connect to continue.</span></p>
+    <span class="badge" data-t="badge">${ok ? "Connected" : "Not connected"}</span>
+    <h1 data-t="title">${ok ? "Connection ready" : "Connection not completed"}</h1>
+    <p>${escapedMessage ?? `<span data-t="bodyBefore">OAuth finished for </span><code>${escapedService}</code><span data-t="bodyAfter">. Return to OOMOL Connect to continue.</span>`}</p>
   </div>
   <div class="actions">
+    ${returnLink}
     <button class="button" type="button" data-t="closeButton">Close window</button>
     <p class="close-note" data-close-note>Automatically closing in 5 seconds.</p>
   </div>
@@ -181,20 +95,11 @@ code {
 const STR=${scriptJson(oauthCompletionStrings)};
 if("BroadcastChannel" in window){const channel=new BroadcastChannel(${scriptJson(oauthCompletionChannelName)});channel.postMessage(${payload});channel.close();}
 const pick=()=>{const langs=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||"en"];for(const raw of langs){const l=String(raw).toLowerCase();if(l.startsWith("zh"))return (!l.includes("hans")&&(l.includes("tw")||l.includes("hk")||l.includes("mo")||l.includes("hant")))?"zh-TW":"zh-CN";const primary=l.split("-")[0];if(STR[raw])return raw;if(STR[primary])return primary;}return "en";};
-const t=STR[pick()]||STR.en;
-document.documentElement.lang=pick();
+const language=pick();const t=STR[language]||STR.en;document.documentElement.lang=language;
 for(const el of document.querySelectorAll("[data-t]")){const key=el.getAttribute("data-t");if(t[key]!=null)el.textContent=t[key];}
 if(t.title)document.title=t.title;
-const note=document.querySelector("[data-close-note]");
-const button=document.querySelector("[data-t=closeButton]");
-const showManual=()=>{if(note)note.textContent=t.manualClose;};
-// window.close() only works for script-opened windows; on a tab the user
-// navigated to it is a no-op. Attempt it, then fall back to a manual hint.
-const tryClose=()=>{window.close();setTimeout(showManual,300);};
-if(button)button.addEventListener("click",tryClose);
-let remaining=5;
-const tick=()=>{if(remaining<=0){tryClose();return;}if(note)note.textContent=t.autoClose.replace("%N%",String(remaining));remaining-=1;setTimeout(tick,1000);};
-tick();
+const note=document.querySelector("[data-close-note]");const button=document.querySelector("[data-t=closeButton]");const showManual=()=>{if(note)note.textContent=t.manualClose;};const tryClose=()=>{window.close();setTimeout(showManual,300);};if(button)button.addEventListener("click",tryClose);
+let remaining=5;const tick=()=>{if(remaining<=0){tryClose();return;}if(note)note.textContent=t.autoClose.replace("%N%",String(remaining));remaining-=1;setTimeout(tick,1000);};tick();
 })();</script>
 </body>
 </html>`;
