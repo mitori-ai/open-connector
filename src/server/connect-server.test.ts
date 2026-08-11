@@ -3156,6 +3156,7 @@ interface CreateTestServerOptions {
   transitFiles?: TransitFileService;
   secretCodec?: ISecretCodec;
   allowedCustomOAuth?: string[];
+  allowedOAuthReturnUrlOrigins?: string[];
 }
 
 function createTestServer(providers: ProviderDefinition[], options: CreateTestServerOptions = {}): ConnectServer {
@@ -3218,6 +3219,7 @@ function createTestServer(providers: ProviderDefinition[], options: CreateTestSe
     transitFiles,
     runtimeTokens,
     runtimePolicyStore: options.runtimePolicyStore ?? new MemoryRuntimePolicyStore(),
+    allowedOAuthReturnUrlOrigins: options.allowedOAuthReturnUrlOrigins,
     registerStaticRoutes: staticRoot ? (app) => registerStaticRoutes(app, staticRoot) : undefined,
     auth: {
       ...options.auth,

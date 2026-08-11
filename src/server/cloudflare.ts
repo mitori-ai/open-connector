@@ -82,6 +82,7 @@ async function createCloudflareApp(env: CloudflareEnv, publicOrigin: string): Pr
     secretCodec,
     adminToken: env.OOMOL_CONNECT_ADMIN_TOKEN,
     runtimeToken: env.OOMOL_CONNECT_RUNTIME_TOKEN,
+    allowedOAuthReturnUrlOrigins: parseActionPolicyList(env.OOMOL_CONNECT_RETURN_URL_ORIGINS),
     actionPolicy: new ActionPolicyService({
       allowedActions: parseActionPolicyList(env.OOMOL_CONNECT_ALLOWED_ACTIONS),
       blockedActions: parseActionPolicyList(env.OOMOL_CONNECT_BLOCKED_ACTIONS),
@@ -90,7 +91,6 @@ async function createCloudflareApp(env: CloudflareEnv, publicOrigin: string): Pr
     }),
     allowedCustomOAuth: parseActionPolicyList(env.OOMOL_CONNECT_ALLOWED_CUSTOM_OAUTH),
     logger: workerLogger,
-    computeRuntimeAuthConfigured: false,
     // Cloudflare compresses on egress itself: Response defaults to
     // `encodeBody: "automatic"`, so the runtime re-encodes a body that Hono's
     // compress() already gzipped. Depending on what the client negotiates, the
@@ -142,10 +142,10 @@ function createCacheKey(env: CloudflareEnv, publicOrigin: string): string {
     runtimeToken: env.OOMOL_CONNECT_RUNTIME_TOKEN ?? "",
     encryptionKey: env.OOMOL_CONNECT_ENCRYPTION_KEY ?? "",
     allowedActions: env.OOMOL_CONNECT_ALLOWED_ACTIONS ?? "",
+    returnUrlOrigins: env.OOMOL_CONNECT_RETURN_URL_ORIGINS ?? "",
     blockedActions: env.OOMOL_CONNECT_BLOCKED_ACTIONS ?? "",
     allowedProxies: env.OOMOL_CONNECT_ALLOWED_PROXIES ?? "",
     blockedProxies: env.OOMOL_CONNECT_BLOCKED_PROXIES ?? "",
-    allowedCustomOAuth: env.OOMOL_CONNECT_ALLOWED_CUSTOM_OAUTH ?? "",
     transitFileTtlSeconds: env.OOMOL_CONNECT_TRANSIT_FILE_TTL_SECONDS ?? "",
     transitFileMaxBytes: env.OOMOL_CONNECT_TRANSIT_FILE_MAX_BYTES ?? "",
     runLimit: env.OOMOL_CONNECT_RUN_LIMIT ?? "",

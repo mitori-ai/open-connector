@@ -74,6 +74,8 @@ export interface IConnectServerOptions {
   actionPolicy?: ActionPolicyService;
   runtimePolicyStore: IRuntimePolicyStore;
   actionSearch?: ActionSearchIndexProvider;
+  /** Exact origins permitted for OAuth completion return URLs. */
+  allowedOAuthReturnUrlOrigins?: string[];
   registerStaticRoutes?: (app: Hono) => void;
   logger?: Logger;
   compressApiResponses?: boolean;
@@ -801,22 +803,41 @@ export class ConnectServer {
     const body = await readJsonBody(context);
     const requestedService = optionalString(body.service);
     const connectionName = readConnectionName(context, body);
+    let returnUrl: string | undefined;
     try {
+      const requestedReturnUrl = optionalString(body.returnUrl);
+      if (requestedReturnUrl) {
+        let parsed: URL;
+        try {
+          parsed = new URL(requestedReturnUrl);
+        } catch {
+          throw new OAuthFlowError("invalid_input", "returnUrl must be an absolute HTTPS URL.");
+        }
+        const localhost = parsed.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
+        if ((parsed.protocol !== "https:" && !localhost) || parsed.username || parsed.password || parsed.hash) {
+          throw new OAuthFlowError(
+            "invalid_input",
+            "returnUrl must be an absolute HTTPS URL without credentials or fragments.",
+          );
+        }
+        if (!(this.options.allowedOAuthReturnUrlOrigins ?? []).includes(parsed.origin)) {
+          throw new OAuthFlowError("invalid_input", "returnUrl is not an allowed OAuth completion origin.");
+        }
+        returnUrl = parsed.toString();
+      }
+
       const service = requiredString(
         body.service,
         "service",
         (message) => new OAuthFlowError("invalid_input", message),
       );
-      const logContext = {
-        path: context.req.path,
-        service,
-        connectionName,
-      };
+      const logContext = { path: context.req.path, service, connectionName };
       this.options.logger?.info(logContext, "oauth authorization started");
 
       const authorization = await this.options.oauthFlow.startAuthorization({
         service,
         connectionName,
+        returnUrl,
         clientConfig: readOAuthClientConfigInput(body),
       });
       const authorizationUrl = new URL(authorization.authorizationUrl);
@@ -836,18 +857,11 @@ export class ConnectServer {
         error instanceof ConnectionError
       ) {
         this.options.logger?.warn(
-          {
-            errorCode: error.code,
-            path: context.req.path,
-            service: requestedService,
-            connectionName,
-          },
+          { errorCode: error.code, path: context.req.path, service: requestedService, connectionName },
           "oauth authorization failed",
         );
-        const status = error.code === "unknown_service" ? 404 : 400;
-        return jsonError(context, status, error.code, error.message);
+        return jsonError(context, error.code === "unknown_service" ? 404 : 400, error.code, error.message);
       }
-
       throw error;
     }
   }
@@ -935,67 +949,70 @@ export class ConnectServer {
   private async completeOAuth(context: Context): Promise<Response> {
     const state = context.req.query("state");
     const code = context.req.query("code");
-    const logContext = {
-      path: context.req.path,
-      hasState: Boolean(state),
-      hasCode: Boolean(code),
-    };
-    this.options.logger?.info(logContext, "oauth callback received");
     const providerError = context.req.query("error");
-    if (providerError) {
-      const providerErrorDescription = context.req.query("error_description");
-      this.options.logger?.warn(
-        {
-          ...logContext,
-          errorCode: "oauth_provider_error",
-          providerError,
-          providerErrorDescription,
-        },
-        "oauth callback failed",
-      );
-      return jsonError(
-        context,
-        400,
-        "oauth_provider_error",
-        `OAuth provider returned error "${providerError}"${providerErrorDescription ? `: ${providerErrorDescription}` : "."}`,
-      );
-    }
-    if (!state || !code) {
-      this.options.logger?.warn(
-        {
-          ...logContext,
-          errorCode: "invalid_oauth_callback",
-        },
-        "oauth callback failed",
-      );
+    const logContext = { path: context.req.path, hasState: Boolean(state), hasCode: Boolean(code) };
+    this.options.logger?.info(logContext, "oauth callback received");
+    if (!state) {
       return jsonError(context, 400, "invalid_oauth_callback", "OAuth callback requires state and code.");
     }
+    if (providerError || !code) {
+      try {
+        const pending = await this.options.oauthFlow.consumeAuthorizationState(state);
+        if (!pending.returnUrl) {
+          return jsonError(
+            context,
+            400,
+            providerError ? "oauth_provider_error" : "invalid_oauth_callback",
+            providerError
+              ? `OAuth provider returned error "${providerError}"${context.req.query("error_description") ? `: ${context.req.query("error_description")}` : "."}`
+              : "OAuth callback requires state and code.",
+          );
+        }
+        return context.html(
+          renderOAuthCompletionPage(pending.service, {
+            ok: false,
+            message: providerError
+              ? "Provider authorization was cancelled or denied."
+              : "OAuth callback did not include an authorization code.",
+            returnUrl: pending.returnUrl,
+          }),
+        );
+      } catch (error) {
+        if (error instanceof OAuthFlowError) {
+          if (providerError) {
+            return jsonError(
+              context,
+              400,
+              "oauth_provider_error",
+              `OAuth provider returned error "${providerError}"${context.req.query("error_description") ? `: ${context.req.query("error_description")}` : "."}`,
+            );
+          }
+          return jsonError(context, 400, error.code, error.message);
+        }
+        throw error;
+      }
+    }
 
-    let service: string;
     try {
-      service = (await this.options.oauthFlow.completeAuthorization({ state, code })).service;
-      this.options.logger?.info(
-        {
-          ...logContext,
-          service,
-        },
-        "oauth callback completed",
-      );
+      const result = await this.options.oauthFlow.completeAuthorization({ state, code });
+      this.options.logger?.info({ ...logContext, service: result.service }, "oauth callback completed");
+      return context.html(renderOAuthCompletionPage(result.service, { ok: true, returnUrl: result.returnUrl }));
     } catch (error) {
       if (error instanceof OAuthFlowError || error instanceof ConnectionError) {
-        this.options.logger?.warn(
-          {
-            ...logContext,
-            errorCode: error.code,
-          },
-          "oauth callback failed",
-        );
+        this.options.logger?.warn({ ...logContext, errorCode: error.code }, "oauth callback failed");
+        if (error instanceof OAuthFlowError && error.returnUrl) {
+          return context.html(
+            renderOAuthCompletionPage("OAuth", {
+              ok: false,
+              message: "OAuth could not be completed. Return to the application and try again.",
+              returnUrl: error.returnUrl,
+            }),
+          );
+        }
         return jsonError(context, error.code === "unknown_service" ? 404 : 400, error.code, error.message);
       }
       throw error;
     }
-
-    return context.html(renderOAuthCompletionPage(service));
   }
 
   private async writeConnectionResult(

@@ -28,4 +28,16 @@ describe("renderOAuthCompletionPage", () => {
     expect(html).toContain("现在可以手动关闭此窗口。");
     expect(html).toContain("navigator.languages");
   });
+
+  it("renders an escaped exact return link for a bound completion URL", () => {
+    const html = renderOAuthCompletionPage("github", {
+      ok: false,
+      message: "Provider denied access.",
+      returnUrl: "https://control.dev.mitori.ai/client/agents/demo/access?access_return=oauth",
+    });
+
+    expect(html).toContain("Connection not completed");
+    expect(html).toContain('href="https://control.dev.mitori.ai/client/agents/demo/access?access_return=oauth"');
+    expect(html).toContain("Provider denied access.");
+  });
 });

@@ -1045,10 +1045,13 @@ function createOAuthAuthorizationPath(): Record<string, unknown> {
                 connectionName: jsonSchema.string({
                   description: "Optional local connection name. Defaults to default.",
                 }),
-                clientId: jsonSchema.string({ description: "Optional connection-scoped OAuth app client id." }),
-                clientSecret: jsonSchema.string({
-                  description: "Optional connection-scoped OAuth app client secret.",
+                returnUrl: jsonSchema.string({
+                  format: "uri",
+                  description:
+                    "Optional allowlisted absolute HTTPS URL (localhost HTTP only in local development) for completion return.",
                 }),
+                clientId: jsonSchema.string({ description: "Optional connection-scoped OAuth app client id." }),
+                clientSecret: jsonSchema.string({ description: "Optional connection-scoped OAuth app client secret." }),
                 requestedScopes: jsonSchema.array(jsonSchema.string(), {
                   minItems: 1,
                   description: "Optional non-empty provider-declared scope subset to request.",
@@ -1066,7 +1069,8 @@ function createOAuthAuthorizationPath(): Record<string, unknown> {
               },
               {
                 required: ["service"],
-                description: "OAuth authorization creation request.",
+                description:
+                  "OAuth authorization creation request. returnUrl is bound into one-time server-side state.",
               },
             ),
           },
@@ -1079,6 +1083,10 @@ function createOAuthAuthorizationPath(): Record<string, unknown> {
               service: jsonSchema.string(),
               authorizationUrl: jsonSchema.string(),
               state: jsonSchema.string(),
+              returnUrl: jsonSchema.string({
+                format: "uri",
+                description: "Exact allowlisted returnUrl bound to consumed OAuth state, when supplied.",
+              }),
             },
             {
               required: ["service", "authorizationUrl", "state"],

@@ -3,12 +3,7 @@ import { access, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { loadCatalog } from "../catalog-store.ts";
 import { ActionPolicyService, parseActionPolicyList } from "../core/action-policy.ts";
-import {
-  parseEgressTrustedHosts,
-  parsePrivateNetworkAccessFlag,
-  setEgressTrustedHosts,
-  setPrivateNetworkAccessAllowed,
-} from "../core/request.ts";
+import { parseEgressTrustedHosts, setEgressTrustedHosts } from "../core/request.ts";
 import { ProviderLoader } from "../providers/provider-loader.ts";
 import { executorModules } from "../providers/registry.generated.ts";
 import { createRuntimeJwtVerifier } from "./api/runtime-jwt.ts";
@@ -42,7 +37,7 @@ const actionPolicy = new ActionPolicyService({
   blockedProxies: parseActionPolicyList(process.env.OOMOL_CONNECT_BLOCKED_PROXIES),
 });
 const allowedCustomOAuth = parseActionPolicyList(process.env.OOMOL_CONNECT_ALLOWED_CUSTOM_OAUTH);
-setPrivateNetworkAccessAllowed(parsePrivateNetworkAccessFlag(process.env.OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK));
+const allowedOAuthReturnUrlOrigins = parseActionPolicyList(process.env.OOMOL_CONNECT_RETURN_URL_ORIGINS);
 setEgressTrustedHosts(parseEgressTrustedHosts(process.env.OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS));
 const builtRoot = join(process.cwd(), "dist/web");
 const staticRoot = await resolveStaticRoot(builtRoot);
@@ -74,6 +69,7 @@ const { app, runtimeAuthConfigured } = await createConnectApp({
   runtimeToken,
   verifyRuntimeJwt,
   actionPolicy,
+  allowedOAuthReturnUrlOrigins,
   allowedCustomOAuth,
   registerStaticRoutes: (app) => registerStaticRoutes(app, staticRoot),
   logger,
