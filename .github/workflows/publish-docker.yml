@@ -4,11 +4,13 @@ name: Publish Docker Image
 # GitHub Packages container registry (GHCR) at ghcr.io/<owner>/<repo>.
 #
 # Triggers and tags:
+#   - same-repository PR:                      the immutable full head commit hash
 #   - push to main (this includes merged PRs): `tip` + the short commit hash
+#   - manual dispatch:                         the immutable full commit hash
 #   - published release:                       `latest` + the release version (e.g. v1.0.0)
 #
 # The image is multi-arch (linux/amd64 + linux/arm64). Each architecture is
-# built NATIVELY on its own Blacksmith runner (no QEMU emulation), pushed by
+# built natively on its own GitHub-hosted runner (no QEMU emulation), pushed by
 # digest, and the two are then merged into a single multi-arch manifest per tag.
 #
 # main-branch pushes and releases never overlap: `push` ignores tag refs and
@@ -16,8 +18,11 @@ name: Publish Docker Image
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize]
   release:
     types: [published]
+  workflow_dispatch:
 
 # One in-flight publish per ref. main pushes share a group so a newer commit
 # cancels an older, still-running build — this keeps `tip` pointing at the most
@@ -40,16 +45,18 @@ jobs:
   # Build each architecture natively and push it to GHCR by digest (no tags yet).
   build:
     name: Build ${{ matrix.platform }}
+    # Fork pull requests receive a read-only token and must never publish packages.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: linux/amd64
-            runner: blacksmith-4vcpu-ubuntu-2404
+            runner: ubuntu-24.04
             pair: linux-amd64
-          # Native arm64 hardware; the `-arm` suffix picks a Blacksmith ARM runner.
+          # Native arm64 hardware provided by GitHub-hosted standard runners.
           - platform: linux/arm64
-            runner: blacksmith-4vcpu-ubuntu-2404-arm
+            runner: ubuntu-24.04-arm
             pair: linux-arm64
     runs-on: ${{ matrix.runner }}
     steps:
@@ -57,6 +64,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # A PR image is tagged with its head SHA, so build that exact commit rather
+          # than GitHub's synthetic merge commit.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
       # OCI image labels; tags are applied later, on the merged manifest.
       - name: Compute labels
@@ -72,14 +82,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Blacksmith's Docker builder keeps a per-Dockerfile layer cache on a
-      # sticky disk (one per architecture), so no cache-from/cache-to is needed.
-      - name: Set up Blacksmith Docker builder
-        uses: useblacksmith/setup-docker-builder@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build and push by digest
         id: build
-        uses: useblacksmith/build-push-action@v2
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
@@ -107,7 +115,7 @@ jobs:
   merge:
     name: Merge & Push manifest
     needs: build
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Download digests
         uses: actions/download-artifact@v8
@@ -133,6 +141,8 @@ jobs:
           tags: |
             type=raw,value=tip,enable=${{ github.event_name == 'push' }}
             type=sha,prefix=,format=short,enable=${{ github.event_name == 'push' }}
+            type=raw,value=${{ github.event.pull_request.head.sha }},enable=${{ github.event_name == 'pull_request' }}
+            type=raw,value=${{ github.sha }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
             type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
 

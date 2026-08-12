@@ -43,7 +43,7 @@ describe("cloudflare worker", () => {
       },
     };
     const env: CloudflareEnv = {
-      DB: new UnusedD1Database(),
+      DB: new RuntimeTokenListOnlyD1Database(),
       TRANSIT_FILES: new UnusedR2Bucket(),
       ASSETS: assets,
     };
@@ -128,7 +128,7 @@ describe("cloudflare worker", () => {
     // A distinct host keeps this out of the R2 test's cached app instance.
     const origin = "https://kv.example.com";
     const env: CloudflareEnv = {
-      DB: new UnusedD1Database(),
+      DB: new RuntimeTokenListOnlyD1Database(),
       TRANSIT_FILES: namespace,
       TRANSIT_FILES_BACKEND: "kv",
       ASSETS: memoryAssets(chunkedCatalog()),
@@ -163,7 +163,7 @@ describe("cloudflare worker", () => {
     // A distinct host keeps this out of the other tests' cached app instances.
     const origin = "https://r2.example.com";
     const env: CloudflareEnv = {
-      DB: new UnusedD1Database(),
+      DB: new RuntimeTokenListOnlyD1Database(),
       TRANSIT_FILES: bucket,
       // TRANSIT_FILES_BACKEND intentionally omitted -> must fall back to R2.
       ASSETS: memoryAssets(chunkedCatalog()),
@@ -196,7 +196,7 @@ describe("cloudflare worker", () => {
 
 function createEnv(): CloudflareEnv {
   return {
-    DB: new UnusedD1Database(),
+    DB: new RuntimeTokenListOnlyD1Database(),
     TRANSIT_FILES: new UnusedR2Bucket(),
     ASSETS: memoryAssets(chunkedCatalog()),
   };
@@ -230,22 +230,29 @@ function memoryAssets(files: Record<string, unknown>): AssetsBinding {
   };
 }
 
-class UnusedD1Database implements D1DatabaseBinding {
+class RuntimeTokenListOnlyD1Database implements D1DatabaseBinding {
   prepare(query: string): D1PreparedStatementBinding {
-    if (query.includes("from runtime_tokens") && query.includes("order by created_at desc, id desc")) {
-      return new EmptyD1PreparedStatement();
+    const normalizedQuery = query.replace(/\s+/g, " ").trim();
+    const runtimeTokenListQuery = [
+      "select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, created_at, last_used_at",
+      "from runtime_tokens",
+      "where revoked_at is null",
+      "order by created_at desc, id desc",
+    ].join(" ");
+    if (normalizedQuery === runtimeTokenListQuery) {
+      return new EmptyRuntimeTokenListStatement();
     }
     throw new Error(`Unexpected D1 query: ${query}`);
   }
 }
 
-class EmptyD1PreparedStatement implements D1PreparedStatementBinding {
+class EmptyRuntimeTokenListStatement implements D1PreparedStatementBinding {
   bind(): D1PreparedStatementBinding {
     return this;
   }
 
   async first<T = Record<string, unknown>>(): Promise<T | null> {
-    return null;
+    throw new Error("Unexpected first() call on the runtime token list query");
   }
 
   async all<T = Record<string, unknown>>(): Promise<{ results: T[] }> {
@@ -253,7 +260,7 @@ class EmptyD1PreparedStatement implements D1PreparedStatementBinding {
   }
 
   async run(): Promise<{ success: boolean; meta: { changes?: number } }> {
-    return { success: true, meta: { changes: 0 } };
+    throw new Error("Unexpected run() call on the runtime token list query");
   }
 }
 
