@@ -10,9 +10,9 @@
   gap: 16px;
   min-height: 56px;
   padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
 }
 
 .runtime-strip div {

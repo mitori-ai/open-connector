@@ -1,9 +1,9 @@
 .oauth-apps-panel {
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  box-shadow: var(--console-shadow-sm);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
+  box-shadow: none;
 }
 
 .oauth-apps-header {

@@ -1,4 +1,3 @@
-import type { AppLang } from "./i18n";
 import type {
   AppData,
   ConnectionRecord,
@@ -8,10 +7,9 @@ import type {
   RuntimePolicyState,
   RuntimeTokenSummary,
 } from "./model";
-import type { ThemeMode } from "./theme";
 import type { FormEvent, ReactNode } from "react";
 
-import { useI18n, useLang, useTranslate } from "@embra/i18n/react";
+import { useTranslate } from "@embra/i18n/react";
 import {
   Activity,
   BookOpen,
@@ -20,10 +18,8 @@ import {
   Home,
   KeyRound,
   Loader2,
-  Monitor,
-  Moon,
+  LogOut,
   RefreshCw,
-  Sun,
   TerminalSquare,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -31,8 +27,7 @@ import { Navigate, NavLink, Route, Routes, useLocation } from "react-router";
 import { AccessPage } from "./access-page";
 import { ActionsPage } from "./actions-page";
 import { ApiError, apiGet, apiPost } from "./api";
-import oomolConnectLogoUrl from "./assets/oomol-connect-logo.png";
-import { persistLang, supportedLangs } from "./i18n";
+import mitoriMarkUrl from "./assets/mitori-mark.png";
 import { emptyData } from "./model";
 import { OAuthAppsPage } from "./oauth-apps-page";
 import { OverviewPage } from "./overview-page";
@@ -44,7 +39,6 @@ import { useThemeMode } from "./theme";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const navItems = [
   { path: "/overview", labelKey: "nav.overview", icon: Home },
@@ -58,12 +52,6 @@ const navItems = [
 
 const oauthCompletionChannelName = "oomol-connect-oauth";
 const oauthCompletedType = "oauth.completed";
-
-const themeOptions = [
-  { value: "auto", labelKey: "shell.themeMode.auto", icon: Monitor },
-  { value: "light", labelKey: "shell.themeMode.light", icon: Sun },
-  { value: "dark", labelKey: "shell.themeMode.dark", icon: Moon },
-] as const;
 
 export interface AuthSession {
   adminAuthConfigured: boolean;
@@ -174,7 +162,8 @@ export async function loadRuntimeData(
 
 export function App(): ReactNode {
   const t = useTranslate();
-  const { theme, setTheme } = useThemeMode();
+  // Keep the existing automatic theme application without exposing theme controls in the UI.
+  useThemeMode();
   const [data, setData] = useState<AppData>(emptyData);
   const [authSession, setAuthSession] = useState<AuthSession>({
     adminAuthConfigured: false,
@@ -272,25 +261,14 @@ export function App(): ReactNode {
   }
 
   if (locked) {
-    return <UnlockView loading={loading} message={error} theme={theme} onThemeChange={setTheme} onUnlock={unlock} />;
+    return <UnlockView loading={loading} message={error} onUnlock={unlock} />;
   }
 
   if (!runtimeChecked) {
     return <InitialLoadingView />;
   }
 
-  return (
-    <AppShell
-      data={data}
-      showLogout={authSession.adminAuthConfigured && authSession.authenticated}
-      loading={loading}
-      error={error}
-      theme={theme}
-      onRefresh={refresh}
-      onThemeChange={setTheme}
-      onLogout={logout}
-    />
-  );
+  return <AppShell data={data} loading={loading} error={error} onRefresh={refresh} onLogout={logout} />;
 }
 
 function InitialLoadingView(): ReactNode {
@@ -308,12 +286,9 @@ function InitialLoadingView(): ReactNode {
 
 function AppShell(props: {
   data: AppData;
-  showLogout: boolean;
   loading: boolean;
   error: string | null;
-  theme: ThemeMode;
   onRefresh(): void;
-  onThemeChange(theme: ThemeMode): void;
   onLogout(): void;
 }): ReactNode {
   const t = useTranslate();
@@ -337,45 +312,53 @@ function AppShell(props: {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <img className="brand-mark" src={oomolConnectLogoUrl} alt="" />
+          <img className="brand-mark" src={mitoriMarkUrl} alt="" />
           <div>
-            <div className="brand-name">OOMOL Connect</div>
+            <div className="brand-name">Mitori OpenConnector</div>
             <div className="brand-subtitle">{t("brand.subtitle")}</div>
           </div>
         </div>
 
         <nav className="sidebar-nav" aria-label={t("shell.primaryNav")}>
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.path}
-                className={({ isActive }) => (isActive ? "nav-item active" : "nav-item")}
-                to={item.path}
-              >
-                <Icon size={16} />
-                <span>{t(item.labelKey)}</span>
-              </NavLink>
-            );
-          })}
+          <div className="nav-group">
+            <div className="nav-group-label">
+              <span className="nav-group-dot" aria-hidden="true" />
+              <span>Setup</span>
+            </div>
+            <div className="nav-group-links">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.path}
+                    className={({ isActive }) => (isActive ? "nav-item active" : "nav-item")}
+                    to={item.path}
+                  >
+                    <Icon size={14} />
+                    <span>{t(item.labelKey)}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          </div>
         </nav>
 
         <div className="sidebar-footer">
-          <LanguageSelect />
-          <ThemeControl theme={props.theme} onThemeChange={props.onThemeChange} />
-          <div className="runtime-status">
+          <div className="runtime-status" role="status" aria-live="polite">
             <StatusDot ok={!props.error} />
-            <span>{props.error ? t("common.apiUnavailable") : t("common.runtimeReady")}</span>
+            <div className="runtime-status-copy">
+              <strong>{props.error ? t("common.apiUnavailable") : t("common.runtimeReady")}</strong>
+            </div>
           </div>
-          <div className="button-row tight">
-            <Button variant="outline" size="icon-sm" onClick={props.onRefresh} aria-label={t("shell.refreshData")}>
+          <div className="runtime-actions">
+            <Button className="runtime-action" variant="outline" size="sm" onClick={props.onRefresh}>
               {props.loading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              <span>{t("common.refresh")}</span>
             </Button>
-            {props.showLogout ? (
-              <Button variant="outline" size="sm" onClick={props.onLogout}>
-                {t("shell.logout")}
-              </Button>
-            ) : null}
+            <Button className="runtime-action" variant="outline" size="sm" onClick={props.onLogout}>
+              <LogOut size={15} />
+              <span>{t("shell.logout")}</span>
+            </Button>
           </div>
         </div>
       </aside>
@@ -435,8 +418,6 @@ function AppShell(props: {
 export interface UnlockViewProps {
   loading: boolean;
   message: string | null;
-  theme: ThemeMode;
-  onThemeChange(theme: ThemeMode): void;
   onUnlock(token: string): void;
 }
 
@@ -453,14 +434,12 @@ export function UnlockView(props: UnlockViewProps): ReactNode {
     <main className="unlock-screen">
       <section className="unlock-panel">
         <div className="brand">
-          <img className="brand-mark" src={oomolConnectLogoUrl} alt="" />
+          <img className="brand-mark" src={mitoriMarkUrl} alt="" />
           <div>
-            <div className="brand-name">OOMOL Connect</div>
+            <div className="brand-name">Mitori OpenConnector</div>
             <div className="brand-subtitle">{t("brand.adminAccess")}</div>
           </div>
         </div>
-        <LanguageSelect />
-        <ThemeControl theme={props.theme} onThemeChange={props.onThemeChange} />
         <form className="form-grid" onSubmit={submit}>
           <Label className="field">
             <span>{t("unlock.token")}</span>
@@ -497,65 +476,6 @@ export function UnlockView(props: UnlockViewProps): ReactNode {
         ) : null}
       </section>
     </main>
-  );
-}
-
-function ThemeControl(props: { theme: ThemeMode; onThemeChange(theme: ThemeMode): void }): ReactNode {
-  const t = useTranslate();
-
-  return (
-    <div className="theme-control" aria-label={t("shell.theme")}>
-      <span>{t("shell.theme")}</span>
-      <div className="theme-segmented-control" role="radiogroup" aria-label={t("shell.theme")}>
-        {themeOptions.map((item) => {
-          const Icon = item.icon;
-          const selected = props.theme === item.value;
-          return (
-            <button
-              key={item.value}
-              type="button"
-              className={selected ? "theme-segment active" : "theme-segment"}
-              role="radio"
-              aria-checked={selected}
-              aria-label={t(item.labelKey)}
-              title={t(item.labelKey)}
-              onClick={() => props.onThemeChange(item.value)}
-            >
-              <Icon size={14} />
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function LanguageSelect(): ReactNode {
-  const t = useTranslate();
-  const i18n = useI18n();
-  const lang = useLang() as AppLang;
-
-  function switchLang(nextLang: AppLang): void {
-    persistLang(nextLang);
-    void i18n.switchLang(nextLang);
-  }
-
-  return (
-    <div className="language-select">
-      <span className="language-select-label">{t("language.label")}</span>
-      <Select value={lang} onValueChange={(value) => switchLang(value as AppLang)}>
-        <SelectTrigger className="language-select-trigger" size="sm" aria-label={t("language.label")}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent className="language-select-content" position="popper" align="start">
-          {supportedLangs.map((item) => (
-            <SelectItem key={item} value={item}>
-              {t(`language.${item}`)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
   );
 }
 

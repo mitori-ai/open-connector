@@ -41,8 +41,6 @@ describe("App", () => {
         createElement(UnlockView, {
           loading: false,
           message: null,
-          theme: "light",
-          onThemeChange: () => {},
           onUnlock: () => {},
         }),
       ),
@@ -60,8 +58,6 @@ describe("App", () => {
         createElement(UnlockView, {
           loading: true,
           message: null,
-          theme: "light",
-          onThemeChange: () => {},
           onUnlock: () => {},
         }),
       ),

@@ -80,25 +80,21 @@
 .example-card,
 .parameter-card,
 .unlock-panel {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  box-shadow: var(--console-shadow-sm);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
+  box-shadow: none;
 }
 
 .metric {
-  min-height: 76px;
-  padding: 10px 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  min-height: 88px;
+  padding: 16px 18px;
 }
 
 .metric span,
 .info-block span {
   display: block;
-  color: var(--muted-foreground);
+  color: var(--cc-muted);
   font-size: 12px;
 }
 
@@ -152,7 +148,7 @@
 .action-row:hover,
 .action-row.active,
 .linked-row:hover {
-  background: var(--accent);
+  background: var(--cc-surface-subtle);
 }
 
 .row-main,
@@ -187,32 +183,34 @@
   justify-content: center;
   max-width: 100%;
   min-height: 22px;
-  padding: 2px 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--background);
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 520;
+  padding: 3px 10px;
+  border: 1px solid var(--cc-border);
+  border-radius: 999px;
+  background: var(--cc-card);
+  color: var(--cc-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   line-height: 1.35;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .badge.success {
-  border-color: color-mix(in oklab, var(--success) 22%, var(--border));
-  background: var(--background);
-  color: var(--success);
+  border-color: color-mix(in oklab, var(--cc-success) 22%, var(--cc-border));
+  background: color-mix(in oklab, var(--cc-success) 10%, transparent);
+  color: var(--cc-success);
 }
 
 .badge.warning {
-  border-color: color-mix(in oklab, var(--warning) 24%, var(--border));
-  background: var(--background);
+  border-color: color-mix(in oklab, var(--warning) 24%, var(--cc-border));
+  background: color-mix(in oklab, var(--warning) 10%, transparent);
   color: var(--warning);
 }
 
 .badge.error {
-  border-color: color-mix(in oklab, var(--destructive) 24%, var(--border));
-  background: var(--background);
+  border-color: color-mix(in oklab, var(--destructive) 24%, var(--cc-border));
+  background: color-mix(in oklab, var(--destructive) 10%, transparent);
   color: var(--destructive);
 }
 
@@ -233,9 +231,9 @@
   gap: 7px;
   min-height: 88px;
   padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--background);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
 }
 
 .info-block svg {
@@ -409,13 +407,14 @@ pre,
 
 table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 th,
 td {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+  padding: 13px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--cc-border) 55%, transparent);
   text-align: left;
   vertical-align: middle;
 }
@@ -426,13 +425,22 @@ td {
 }
 
 th {
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 620;
+  padding-top: 11px;
+  padding-bottom: 11px;
+  background: var(--cc-surface-subtle);
+  color: var(--cc-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
 }
 
 tr:last-child td {
   border-bottom: 0;
+}
+
+tbody tr:hover td {
+  background: var(--cc-surface-subtle);
 }
 
 .mono {
