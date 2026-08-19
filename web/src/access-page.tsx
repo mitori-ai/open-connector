@@ -46,7 +46,7 @@ import {
 } from "./policy";
 import { PolicyEditor } from "./policy-editor";
 import { PolicySuggestionInput } from "./policy-suggestion-input";
-import { Badge, EmptyState, FormStatus } from "./shared-ui";
+import { Badge, EmptyState, FormStatus, PageHead } from "./shared-ui";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -255,158 +255,166 @@ export function AccessPage(props: AccessPageProps): ReactNode {
   }
 
   return (
-    <section className="detail-panel access-panel">
-      <details
-        className="access-section-disclosure"
-        open={policyExpanded}
-        onToggle={(event) => setPolicyExpanded(event.currentTarget.open)}
-      >
-        <summary className="access-section-heading">
+    <div className="page-stack access-page">
+      <PageHead
+        title={t("shell.headings.access.title")}
+        description={t("shell.headings.access.subtitle")}
+        refreshLabel={t("common.refresh")}
+        onRefresh={props.onRefresh}
+      />
+      <section className="detail-panel access-panel">
+        <details
+          className="access-section-disclosure"
+          open={policyExpanded}
+          onToggle={(event) => setPolicyExpanded(event.currentTarget.open)}
+        >
+          <summary className="access-section-heading">
+            <div>
+              <h2>{t("access.policy.title")}</h2>
+              <p>{t("access.policy.description")}</p>
+            </div>
+            <ChevronDown size={17} />
+          </summary>
+
+          <div className="access-section-content">
+            <PolicyBaseline policy={policy} providers={props.providers} />
+            <PolicyTester policy={policy} providers={props.providers} tokens={props.tokens} />
+            <div className="access-settings-list">
+              <PolicyLayerDisclosure rules={policy.deployment} />
+              <RuntimePolicySummary policy={policy} onEdit={startRuntimeEditing} />
+            </div>
+            {!runtimeEditing && runtimeStatus ? <FormStatus message={runtimeStatus} /> : null}
+          </div>
+        </details>
+
+        <div className="access-section-heading">
           <div>
-            <h2>{t("access.policy.title")}</h2>
-            <p>{t("access.policy.description")}</p>
+            <h2>{t("access.title")}</h2>
+            <p>{t("access.description")}</p>
           </div>
-          <ChevronDown size={17} />
-        </summary>
 
-        <div className="access-section-content">
-          <PolicyBaseline policy={policy} providers={props.providers} />
-          <PolicyTester policy={policy} providers={props.providers} tokens={props.tokens} />
-          <div className="access-settings-list">
-            <PolicyLayerDisclosure rules={policy.deployment} />
-            <RuntimePolicySummary policy={policy} onEdit={startRuntimeEditing} />
-          </div>
-          {!runtimeEditing && runtimeStatus ? <FormStatus message={runtimeStatus} /> : null}
-        </div>
-      </details>
-
-      <div className="access-section-heading">
-        <div>
-          <h2>{t("access.title")}</h2>
-          <p>{t("access.description")}</p>
+          <Button variant="outline" size="sm" type="button" onClick={openCreate}>
+            <KeyRound size={16} />
+            {t("access.createToken")}
+          </Button>
         </div>
 
-        <Button variant="outline" size="sm" type="button" onClick={openCreate}>
-          <KeyRound size={16} />
-          {t("access.createToken")}
-        </Button>
-      </div>
+        {!createOpen && tokenStatus ? <FormStatus message={tokenStatus} /> : null}
 
-      {!createOpen && tokenStatus ? <FormStatus message={tokenStatus} /> : null}
-
-      <section className="table-panel">
-        {props.tokens.length === 0 ? (
-          <EmptyState
-            icon={<KeyRound size={20} />}
-            title={t("access.noTokensTitle")}
-            description={t("access.noTokensDescription")}
-            density="compact"
-          />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t("access.table.name")}</TableHead>
-                <TableHead>{t("access.table.status")}</TableHead>
-                <TableHead>{t("access.table.policy")}</TableHead>
-                <TableHead>{t("access.table.created")}</TableHead>
-                <TableHead>{t("access.table.lastUsed")}</TableHead>
-                <TableHead></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {props.tokens.map((token) => (
-                <TableRow key={token.id}>
-                  <TableCell>
-                    <strong>{token.name}</strong>
-                  </TableCell>
-                  <TableCell>
-                    <Badge tone="success">{t("common.active")}</Badge>
-                  </TableCell>
-                  <TableCell>{tokenPolicySummary(token, t)}</TableCell>
-                  <TableCell>{formatDate(token.createdAt)}</TableCell>
-                  <TableCell>{token.lastUsedAt ? formatDate(token.lastUsedAt) : ""}</TableCell>
-                  <TableCell className="table-actions">
-                    <Button variant="outline" size="sm" onClick={() => openPolicyEditor(token)}>
-                      <Pencil size={15} />
-                      {t("access.policy.edit")}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => void revoke(token.id)}>
-                      <Trash2 size={15} />
-                      {t("access.revoke")}
-                    </Button>
-                  </TableCell>
+        <section className="table-panel">
+          {props.tokens.length === 0 ? (
+            <EmptyState
+              icon={<KeyRound size={20} />}
+              title={t("access.noTokensTitle")}
+              description={t("access.noTokensDescription")}
+              density="compact"
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("access.table.name")}</TableHead>
+                  <TableHead>{t("access.table.status")}</TableHead>
+                  <TableHead>{t("access.table.policy")}</TableHead>
+                  <TableHead>{t("access.table.created")}</TableHead>
+                  <TableHead>{t("access.table.lastUsed")}</TableHead>
+                  <TableHead></TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+              </TableHeader>
+              <TableBody>
+                {props.tokens.map((token) => (
+                  <TableRow key={token.id}>
+                    <TableCell>
+                      <strong>{token.name}</strong>
+                    </TableCell>
+                    <TableCell>
+                      <Badge tone="success">{t("common.active")}</Badge>
+                    </TableCell>
+                    <TableCell>{tokenPolicySummary(token, t)}</TableCell>
+                    <TableCell>{formatDate(token.createdAt)}</TableCell>
+                    <TableCell>{token.lastUsedAt ? formatDate(token.lastUsedAt) : ""}</TableCell>
+                    <TableCell className="table-actions">
+                      <Button variant="outline" size="sm" onClick={() => openPolicyEditor(token)}>
+                        <Pencil size={15} />
+                        {t("access.policy.edit")}
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => void revoke(token.id)}>
+                        <Trash2 size={15} />
+                        {t("access.revoke")}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </section>
+
+        {runtimeEditing ? (
+          <RuntimePolicyDialog
+            draft={runtimeDraft}
+            draftState={runtimeDraftState}
+            providers={props.providers}
+            dirty={runtimeDirty}
+            risk={runtimeRisk}
+            saving={runtimeSaving}
+            status={runtimeStatus}
+            onDraftChange={setRuntimeDraft}
+            onDiscard={discardRuntimeEditing}
+            onSave={requestRuntimeSave}
+          />
+        ) : null}
+
+        {createOpen ? (
+          <CreateTokenDialog
+            name={name}
+            created={created}
+            status={tokenStatus}
+            copied={copied}
+            draft={createDraft}
+            providers={props.providers}
+            onNameChange={setName}
+            onDraftChange={setCreateDraft}
+            onSubmit={submitToken}
+            onCopy={(token) => void copy(token)}
+            onClose={closeCreate}
+          />
+        ) : null}
+        {editingToken ? (
+          <EditTokenPolicyDialog
+            token={editingToken}
+            draft={editTokenDraft}
+            providers={props.providers}
+            status={tokenStatus}
+            onDraftChange={setEditTokenDraft}
+            onSubmit={saveTokenPolicy}
+            onClose={() => setEditingToken(null)}
+          />
+        ) : null}
+        <Dialog open={confirmRuntimeSave} onOpenChange={setConfirmRuntimeSave}>
+          <DialogContent className="max-w-[min(480px,calc(100vw-2rem))]">
+            <DialogHeader>
+              <DialogTitle>{t("access.policy.confirm.title")}</DialogTitle>
+              <DialogDescription>{t(`access.policy.confirm.${runtimeRisk ?? "actions"}`)}</DialogDescription>
+            </DialogHeader>
+            <div className="button-row">
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setConfirmRuntimeSave(false);
+                  void persistRuntimePolicy();
+                }}
+              >
+                {t("access.policy.confirm.save")}
+              </Button>
+              <Button variant="outline" onClick={() => setConfirmRuntimeSave(false)}>
+                {t("access.policy.confirm.keepEditing")}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </section>
-
-      {runtimeEditing ? (
-        <RuntimePolicyDialog
-          draft={runtimeDraft}
-          draftState={runtimeDraftState}
-          providers={props.providers}
-          dirty={runtimeDirty}
-          risk={runtimeRisk}
-          saving={runtimeSaving}
-          status={runtimeStatus}
-          onDraftChange={setRuntimeDraft}
-          onDiscard={discardRuntimeEditing}
-          onSave={requestRuntimeSave}
-        />
-      ) : null}
-
-      {createOpen ? (
-        <CreateTokenDialog
-          name={name}
-          created={created}
-          status={tokenStatus}
-          copied={copied}
-          draft={createDraft}
-          providers={props.providers}
-          onNameChange={setName}
-          onDraftChange={setCreateDraft}
-          onSubmit={submitToken}
-          onCopy={(token) => void copy(token)}
-          onClose={closeCreate}
-        />
-      ) : null}
-      {editingToken ? (
-        <EditTokenPolicyDialog
-          token={editingToken}
-          draft={editTokenDraft}
-          providers={props.providers}
-          status={tokenStatus}
-          onDraftChange={setEditTokenDraft}
-          onSubmit={saveTokenPolicy}
-          onClose={() => setEditingToken(null)}
-        />
-      ) : null}
-      <Dialog open={confirmRuntimeSave} onOpenChange={setConfirmRuntimeSave}>
-        <DialogContent className="max-w-[min(480px,calc(100vw-2rem))]">
-          <DialogHeader>
-            <DialogTitle>{t("access.policy.confirm.title")}</DialogTitle>
-            <DialogDescription>{t(`access.policy.confirm.${runtimeRisk ?? "actions"}`)}</DialogDescription>
-          </DialogHeader>
-          <div className="button-row">
-            <Button
-              variant="destructive"
-              onClick={() => {
-                setConfirmRuntimeSave(false);
-                void persistRuntimePolicy();
-              }}
-            >
-              {t("access.policy.confirm.save")}
-            </Button>
-            <Button variant="outline" onClick={() => setConfirmRuntimeSave(false)}>
-              {t("access.policy.confirm.keepEditing")}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </section>
+    </div>
   );
 }
 

@@ -22,7 +22,7 @@ import {
   parameterSummaries,
   usableConnectionsForService,
 } from "./model";
-import { Badge, EmptyState, TagList } from "./shared-ui";
+import { Badge, EmptyState, PageHead, TagList } from "./shared-ui";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -120,6 +120,12 @@ export function ActionsPage(props: ActionsPageProps): ReactNode {
 
   return (
     <div className="page-stack actions-page">
+      <PageHead
+        title={t("shell.headings.actions.title")}
+        description={t("shell.headings.actions.subtitle")}
+        refreshLabel={t("common.refresh")}
+        onRefresh={props.onRefresh}
+      />
       <section className="page-toolbar actions-toolbar">
         <label className="relative flex min-w-56 flex-1 items-center">
           <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />

@@ -42,7 +42,7 @@ import {
   OAuthAppDialog,
   splitClientConfigFieldValues,
 } from "./oauth-app-form";
-import { Badge, EmptyState, FormStatus, ProviderIcon, TagList } from "./shared-ui";
+import { Badge, EmptyState, FormStatus, PageHead, ProviderIcon, TagList } from "./shared-ui";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,17 +139,36 @@ const providerCardStyle = {
 } satisfies CSSProperties;
 
 export function ProvidersPage(props: ProvidersPageProps): ReactNode {
+  const t = useTranslate();
   const params = useParams();
   const routeProvider = params.service
     ? props.data.providers.find((provider) => provider.service === params.service)
     : undefined;
+  const pageHead = (
+    <PageHead
+      title={t("shell.headings.providers.title")}
+      description={t("shell.headings.providers.subtitle")}
+      refreshLabel={t("common.refresh")}
+      onRefresh={props.onRefresh}
+    />
+  );
 
   if (!params.service) {
-    return <ProviderBrowser data={props.data} />;
+    return (
+      <div className="page-stack providers-page">
+        {pageHead}
+        <ProviderBrowser data={props.data} />
+      </div>
+    );
   }
 
   if (!routeProvider) {
-    return <ProviderNotFound service={params.service} />;
+    return (
+      <div className="page-stack providers-page">
+        {pageHead}
+        <ProviderNotFound service={params.service} />
+      </div>
+    );
   }
 
   const connectionStatus = resolveProviderConnectionStatus(
@@ -159,14 +178,17 @@ export function ProvidersPage(props: ProvidersPageProps): ReactNode {
   );
 
   return (
-    <ProviderDetail
-      key={routeProvider.service}
-      provider={routeProvider}
-      connections={configurableConnectionsForProvider(props.data.connections, routeProvider.service)}
-      connectionStatus={connectionStatus}
-      oauthConfig={oauthConfigForProvider(props.data.oauthConfigs, routeProvider.service)}
-      onRefresh={props.onRefresh}
-    />
+    <div className="page-stack providers-page">
+      {pageHead}
+      <ProviderDetail
+        key={routeProvider.service}
+        provider={routeProvider}
+        connections={configurableConnectionsForProvider(props.data.connections, routeProvider.service)}
+        connectionStatus={connectionStatus}
+        oauthConfig={oauthConfigForProvider(props.data.oauthConfigs, routeProvider.service)}
+        onRefresh={props.onRefresh}
+      />
+    </div>
   );
 }
 

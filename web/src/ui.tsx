@@ -305,17 +305,13 @@ function AppShell(props: {
   ]
     .filter(Boolean)
     .join(" ");
-  const currentNavItem = navItems.find((item) => item.labelKey === `nav.${heading}`) ?? navItems[0];
-  const CurrentNavIcon = currentNavItem.icon;
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-mark" src={mitoriMarkUrl} alt="" />
           <div>
-            <div className="brand-name">Mitori OpenConnector</div>
-            <div className="brand-subtitle">{t("brand.subtitle")}</div>
+            <div className="brand-name">Mitori</div>
           </div>
         </div>
 
@@ -366,8 +362,7 @@ function AppShell(props: {
       <div className={isBrowserPage ? "main-region main-region-browser" : "main-region"}>
         <header className="shell-header">
           <div className="shell-header-title">
-            <CurrentNavIcon size={16} />
-            <h1>{t(`shell.headings.${heading}.title`)}</h1>
+            <h1>Setup Agent</h1>
           </div>
           {props.loading ? (
             <div className="loading-panel page-loading">
@@ -393,7 +388,13 @@ function AppShell(props: {
             <Route path="/actions/:actionId" element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />} />
             <Route
               path="/runs"
-              element={<RunsPage initialRuns={props.data.runs} nextCursor={props.data.runsNextCursor} />}
+              element={
+                <RunsPage
+                  initialRuns={props.data.runs}
+                  nextCursor={props.data.runsNextCursor}
+                  onRefresh={props.onRefresh}
+                />
+              }
             />
             <Route
               path="/access"
@@ -436,7 +437,7 @@ export function UnlockView(props: UnlockViewProps): ReactNode {
         <div className="brand">
           <img className="brand-mark" src={mitoriMarkUrl} alt="" />
           <div>
-            <div className="brand-name">Mitori OpenConnector</div>
+            <div className="brand-name">Mitori</div>
             <div className="brand-subtitle">{t("brand.adminAccess")}</div>
           </div>
         </div>

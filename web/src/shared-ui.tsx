@@ -1,12 +1,39 @@
 import type { ProviderDefinition } from "./model";
 import type { ReactNode } from "react";
 
-import { CircleAlert, Inbox } from "lucide-react";
+import { CircleAlert, Inbox, Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import providerIconUrls from "virtual:oomol-provider-icons";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge as UiBadge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+
+interface PageHeadProps {
+  title: string;
+  description?: string;
+  refreshLabel?: string;
+  loading?: boolean;
+  onRefresh?: () => void;
+}
+
+export function PageHead(props: PageHeadProps): ReactNode {
+  return (
+    <section className="cc-page-head">
+      <div>
+        <div className="cc-kicker">Setup</div>
+        <h1 className="cc-title">{props.title}</h1>
+        {props.description ? <p>{props.description}</p> : null}
+      </div>
+      {props.onRefresh ? (
+        <Button className="cc-button" variant="outline" size="sm" onClick={props.onRefresh}>
+          {props.loading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {props.refreshLabel ?? "Refresh"}
+        </Button>
+      ) : null}
+    </section>
+  );
+}
 
 export function Metric(props: { label: string; value: number }): ReactNode {
   return (
