@@ -4,7 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useTranslate } from "@embra/i18n/react";
-import { Activity, ArrowRight, ArrowUpRight, Cable, RefreshCw, TerminalSquare } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight, Cable, CheckCircle2, TerminalSquare } from "lucide-react";
 import { Link } from "react-router";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { createOverviewSummary, sortProviders } from "./model";
@@ -49,6 +49,15 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
   );
   const capabilityCells: CapabilityStatusCellProps[] = [
     {
+      icon: CheckCircle2,
+      label: t("overview.runtimeReady"),
+      value: t("overview.ready"),
+      meta: t("overview.connectedProviders", { count: summary.connectedCount }),
+      badgeLabel: t("overview.ready"),
+      badgeTone: "success",
+      to: "/overview",
+    },
+    {
       icon: Cable,
       providerIcons: providerIconSources,
       label: t("overview.metrics.providers"),
@@ -86,16 +95,6 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
         refreshLabel={t("common.refresh")}
         onRefresh={props.onRefresh}
       />
-      <Card className="runtime-strip">
-        <div>
-          <strong>{t("overview.runtimeReady")}</strong>
-          <span>{t("overview.connectedProviders", { count: summary.connectedCount })}</span>
-        </div>
-        <Button variant="outline" size="sm" onClick={props.onRefresh}>
-          <RefreshCw size={15} />
-          {t("common.refresh")}
-        </Button>
-      </Card>
 
       <section className="content-grid">
         <Card className="detail-panel overview-capability-panel">

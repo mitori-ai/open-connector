@@ -4,11 +4,11 @@
 
 .access-panel {
   display: grid;
-  gap: 16px;
+  gap: 14px;
 }
 
 .access-section-disclosure {
-  padding-bottom: 24px;
+  padding-bottom: 20px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -60,9 +60,9 @@
 
 .access-settings-list {
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--background);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
 }
 
 .access-settings-list > .policy-layer-disclosure,
@@ -72,7 +72,7 @@
 }
 
 .access-settings-list > * + * {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--cc-border);
 }
 
 .policy-section-title,
@@ -193,6 +193,12 @@
 
 .policy-suggestion-input [data-slot="input"] {
   width: 100%;
+  height: 28px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .policy-suggestion-list {
@@ -305,13 +311,17 @@
 }
 
 .access-setting-copy strong {
-  font-size: 14px;
-  line-height: 1.35;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.15;
 }
 
 .access-setting-copy span {
-  color: var(--muted-foreground);
-  font-size: 12px;
+  color: var(--cc-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
 }
 
 .policy-decision-trace[open] summary > svg:last-child,
@@ -350,6 +360,12 @@
 
 .policy-layer-disclosure summary strong {
   white-space: nowrap;
+}
+
+.access-settings-list > .policy-layer-disclosure summary,
+.access-settings-list > .runtime-policy-summary {
+  min-height: 58px;
+  padding: 10px 16px;
 }
 
 .policy-rule-readout {
@@ -537,6 +553,12 @@
   font-family: var(--font-mono);
 }
 
+.policy-rule-add [data-slot="input"] {
+  height: 28px;
+  min-height: 28px;
+  font-size: 12px;
+}
+
 .policy-rule-error,
 .policy-editor-error {
   color: var(--destructive);
@@ -676,6 +698,32 @@
 
 .access-section-heading > [data-slot="button"] {
   justify-self: end;
+}
+
+.access-panel > .table-panel {
+  overflow: hidden;
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
+}
+
+.access-panel > .table-panel .empty-state.compact {
+  min-height: 108px;
+  padding: 16px 18px;
+  border-radius: 0;
+  background: var(--cc-card);
+}
+
+.access-panel > .table-panel .empty-state.compact strong {
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.access-panel > .table-panel .empty-state.compact p {
+  color: var(--cc-muted);
+  font-size: 11.5px;
 }
 
 .token-dialog-form {

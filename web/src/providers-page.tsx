@@ -268,7 +268,7 @@ function ProviderBrowser(props: ProviderBrowserProps): ReactNode {
         <label className="relative flex w-full max-w-80 items-center sm:w-80">
           <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
           <Input
-            className="h-8 pl-9 text-sm"
+            className="h-7 pl-9 text-xs"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t("providers.searchPlaceholder")}
@@ -413,7 +413,7 @@ function ProviderCollectionBar(props: {
           <ToggleGroupItem
             key={option.id}
             value={option.id}
-            className="h-8 gap-2 rounded-md border px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 data-[state=on]:[&>span:last-child]:text-primary-foreground/70 [&>span:last-child]:min-w-8 [&>span:last-child]:text-right [&>span:last-child]:text-xs [&>span:last-child]:text-muted-foreground [&>span:last-child]:tabular-nums"
+            className="h-7 gap-2 rounded-[5px] border px-2.5 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 data-[state=on]:[&>span:last-child]:text-primary-foreground/70 [&>span:last-child]:min-w-7 [&>span:last-child]:text-right [&>span:last-child]:text-[11px] [&>span:last-child]:text-muted-foreground [&>span:last-child]:tabular-nums"
             disabled={option.count === 0 && option.id !== "all"}
           >
             <span>{t(option.labelKey)}</span>
@@ -423,7 +423,7 @@ function ProviderCollectionBar(props: {
       </ToggleGroup>
       <Select value={props.categoryFilter} onValueChange={props.onSelectCategory}>
         <SelectTrigger
-          className="h-8 w-48 rounded-md border px-3 text-sm"
+          className="!h-7 w-44 rounded-[5px] border px-2.5 text-xs"
           size="sm"
           aria-label={t("providers.categoryFilterLabel")}
         >

@@ -523,13 +523,13 @@ function PolicyTester(props: {
         >
           <ToggleGroupItem
             value="action"
-            className="h-[30px] rounded-md px-3 text-sm data-[state=on]:bg-background data-[state=on]:shadow-console-sm"
+            className="h-7 rounded-[5px] px-2.5 text-xs data-[state=on]:bg-background data-[state=on]:shadow-console-sm"
           >
             {t("access.policy.tester.action")}
           </ToggleGroupItem>
           <ToggleGroupItem
             value="proxy"
-            className="h-[30px] rounded-md px-3 text-sm data-[state=on]:bg-background data-[state=on]:shadow-console-sm"
+            className="h-7 rounded-[5px] px-2.5 text-xs data-[state=on]:bg-background data-[state=on]:shadow-console-sm"
           >
             {t("access.policy.tester.proxy")}
           </ToggleGroupItem>
