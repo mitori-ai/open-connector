@@ -121,10 +121,11 @@ describe("OverviewPage", () => {
     expect(markup.match(/class="[^"]*\boverview-health-panel\b[^"]*"/g) ?? []).toHaveLength(0);
   });
 
-  it("renders three capability cell links", () => {
+  it("renders four capability cell links", () => {
     const markup = renderOverview();
 
-    expect(markup.match(/class="overview-capability-cell"/g) ?? []).toHaveLength(3);
+    expect(markup.match(/class="overview-capability-cell"/g) ?? []).toHaveLength(4);
+    expect(markup).toMatch(/class="overview-capability-cell" href="\/overview"/);
     expect(markup).toMatch(/class="overview-capability-cell" href="\/providers"/);
     expect(markup).toMatch(/class="overview-capability-cell" href="\/actions"/);
     expect(markup).toMatch(/class="overview-capability-cell" href="\/runs"/);
@@ -153,7 +154,6 @@ describe("OverviewPage", () => {
     expect(markup).toContain("No call trend yet");
     expect(markup).toContain("No recent calls");
     expect(markup).not.toContain("No runs yet");
-    expect(markup).not.toContain("lucide-circle-check");
     expect(markup).not.toContain("lucide-x");
   });
 });

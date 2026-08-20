@@ -42,7 +42,7 @@ import {
   OAuthAppDialog,
   splitClientConfigFieldValues,
 } from "./oauth-app-form";
-import { Badge, EmptyState, FormStatus, ProviderIcon, TagList } from "./shared-ui";
+import { Badge, EmptyState, FormStatus, PageHead, ProviderIcon, TagList } from "./shared-ui";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,17 +139,36 @@ const providerCardStyle = {
 } satisfies CSSProperties;
 
 export function ProvidersPage(props: ProvidersPageProps): ReactNode {
+  const t = useTranslate();
   const params = useParams();
   const routeProvider = params.service
     ? props.data.providers.find((provider) => provider.service === params.service)
     : undefined;
+  const pageHead = (
+    <PageHead
+      title={t("shell.headings.providers.title")}
+      description={t("shell.headings.providers.subtitle")}
+      refreshLabel={t("common.refresh")}
+      onRefresh={props.onRefresh}
+    />
+  );
 
   if (!params.service) {
-    return <ProviderBrowser data={props.data} />;
+    return (
+      <div className="page-stack providers-page">
+        {pageHead}
+        <ProviderBrowser data={props.data} />
+      </div>
+    );
   }
 
   if (!routeProvider) {
-    return <ProviderNotFound service={params.service} />;
+    return (
+      <div className="page-stack providers-page">
+        {pageHead}
+        <ProviderNotFound service={params.service} />
+      </div>
+    );
   }
 
   const connectionStatus = resolveProviderConnectionStatus(
@@ -159,14 +178,17 @@ export function ProvidersPage(props: ProvidersPageProps): ReactNode {
   );
 
   return (
-    <ProviderDetail
-      key={routeProvider.service}
-      provider={routeProvider}
-      connections={configurableConnectionsForProvider(props.data.connections, routeProvider.service)}
-      connectionStatus={connectionStatus}
-      oauthConfig={oauthConfigForProvider(props.data.oauthConfigs, routeProvider.service)}
-      onRefresh={props.onRefresh}
-    />
+    <div className="page-stack providers-page">
+      {pageHead}
+      <ProviderDetail
+        key={routeProvider.service}
+        provider={routeProvider}
+        connections={configurableConnectionsForProvider(props.data.connections, routeProvider.service)}
+        connectionStatus={connectionStatus}
+        oauthConfig={oauthConfigForProvider(props.data.oauthConfigs, routeProvider.service)}
+        onRefresh={props.onRefresh}
+      />
+    </div>
   );
 }
 
@@ -241,12 +263,12 @@ function ProviderBrowser(props: ProviderBrowserProps): ReactNode {
     <section className="provider-browser-panel">
       <div className="provider-browser-header">
         <div>
-          <h2>{t("providers.catalogTitle")}</h2>
+          <h2 className="cc-section-title">{t("providers.catalogTitle")}</h2>
         </div>
         <label className="relative flex w-full max-w-80 items-center sm:w-80">
           <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
           <Input
-            className="h-8 pl-9 text-sm"
+            className="h-7 pl-9 text-xs"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t("providers.searchPlaceholder")}
@@ -391,7 +413,7 @@ function ProviderCollectionBar(props: {
           <ToggleGroupItem
             key={option.id}
             value={option.id}
-            className="h-8 gap-2 rounded-md border px-3 text-sm data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 data-[state=on]:[&>span:last-child]:text-primary-foreground/70 [&>span:last-child]:min-w-8 [&>span:last-child]:text-right [&>span:last-child]:text-xs [&>span:last-child]:text-muted-foreground [&>span:last-child]:tabular-nums"
+            className="h-7 gap-2 rounded-[5px] border px-2.5 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 data-[state=on]:[&>span:last-child]:text-primary-foreground/70 [&>span:last-child]:min-w-7 [&>span:last-child]:text-right [&>span:last-child]:text-[11px] [&>span:last-child]:text-muted-foreground [&>span:last-child]:tabular-nums"
             disabled={option.count === 0 && option.id !== "all"}
           >
             <span>{t(option.labelKey)}</span>
@@ -401,7 +423,7 @@ function ProviderCollectionBar(props: {
       </ToggleGroup>
       <Select value={props.categoryFilter} onValueChange={props.onSelectCategory}>
         <SelectTrigger
-          className="h-8 w-48 rounded-md border px-3 text-sm"
+          className="!h-7 w-44 rounded-[5px] border px-2.5 text-xs"
           size="sm"
           aria-label={t("providers.categoryFilterLabel")}
         >
@@ -697,7 +719,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         </div>
         <div className="provider-detail-actions">
           {props.provider.homepageUrl ? (
-            <Button asChild variant="outline" size="sm">
+            <Button className="cc-button" asChild variant="outline" size="sm">
               <a href={props.provider.homepageUrl} target="_blank" rel="noreferrer">
                 {t("providers.providerHomepage")}
                 <ArrowUpRight size={14} />
@@ -711,7 +733,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         <section className="detail-panel provider-detail-card provider-connection-card">
           <div className="provider-panel-title-row">
             <div>
-              <h3>{t("providers.connection")}</h3>
+              <h3 className="cc-section-title">{t("providers.connection")}</h3>
               <p>{connectionDescription}</p>
             </div>
           </div>
@@ -788,7 +810,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         <section className="detail-panel provider-detail-card">
           <div className="provider-panel-title-row">
             <div>
-              <h3>{t("providers.scopes")}</h3>
+              <h3 className="cc-section-title">{t("providers.scopes")}</h3>
               <p>{t("providers.scopesDescription")}</p>
             </div>
           </div>
@@ -801,7 +823,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         <section className="detail-panel provider-detail-card">
           <div className="provider-panel-title-row">
             <div>
-              <h3>{t("providers.actions")}</h3>
+              <h3 className="cc-section-title">{t("providers.actions")}</h3>
               <p>{t("providers.actionsDescription", { count: props.provider.actions.length })}</p>
             </div>
           </div>
@@ -1372,13 +1394,13 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
       {showActions ? (
         <div className="button-row">
           {needsOAuthClient ? (
-            <Button type="button" onClick={props.onConfigureOAuthClient}>
+            <Button className="provider-configure-button" type="button" onClick={props.onConfigureOAuthClient}>
               <Settings size={16} />
               {t("providers.buttons.configureOAuthClient")}
             </Button>
           ) : (
             <>
-              <Button type="submit" disabled={!canSubmit}>
+              <Button className="cc-button" type="submit" disabled={!canSubmit}>
                 {props.auth.type === "oauth2" ? <ExternalLink size={16} /> : <Check size={16} />}
                 {submitLabel}
               </Button>

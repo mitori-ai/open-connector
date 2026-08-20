@@ -104,7 +104,7 @@ export function OAuthAppForm(props: OAuthAppFormProps): ReactNode {
   }
 
   return (
-    <form className="form-grid" onSubmit={(event) => void submit(event)}>
+    <form className="form-grid oauth-app-form" onSubmit={(event) => void submit(event)}>
       {props.config?.expectedRedirectUri ? (
         <Label className="field">
           <span>{t("providers.oauthClientSettings.callbackUrl")}</span>
@@ -136,7 +136,7 @@ export function OAuthAppForm(props: OAuthAppFormProps): ReactNode {
         />
       ))}
       <div className="button-row">
-        <Button type="submit">
+        <Button className="cc-button" type="submit">
           <Settings size={16} />
           {t(configured ? "providers.buttons.updateOAuthClient" : "providers.buttons.saveOAuthClient")}
         </Button>

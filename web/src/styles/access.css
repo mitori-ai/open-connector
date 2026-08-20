@@ -4,11 +4,11 @@
 
 .access-panel {
   display: grid;
-  gap: 16px;
+  gap: 14px;
 }
 
 .access-section-disclosure {
-  padding-bottom: 24px;
+  padding-bottom: 20px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -60,9 +60,9 @@
 
 .access-settings-list {
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--background);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
 }
 
 .access-settings-list > .policy-layer-disclosure,
@@ -72,7 +72,7 @@
 }
 
 .access-settings-list > * + * {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--cc-border);
 }
 
 .policy-section-title,
@@ -107,44 +107,60 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--background);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
 }
 
 .policy-baseline-grid > div {
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding: 12px 14px;
+  padding: 16px 18px;
 }
 
 .policy-baseline-grid > div + div {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--cc-border);
 }
 
-.policy-baseline-grid span,
-.policy-baseline-grid small {
+.policy-baseline-grid span {
   overflow: hidden;
-  color: var(--muted-foreground);
-  font-size: 12px;
+  color: var(--cc-muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   text-overflow: ellipsis;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .policy-baseline-grid strong {
   overflow: hidden;
-  font-size: 16px;
+  margin-top: 3px;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.policy-baseline-grid small {
+  overflow: hidden;
+  color: var(--cc-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .policy-tester {
   padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--background);
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
 }
 
 .policy-tester-form {
@@ -177,6 +193,12 @@
 
 .policy-suggestion-input [data-slot="input"] {
   width: 100%;
+  height: 28px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .policy-suggestion-list {
@@ -289,13 +311,17 @@
 }
 
 .access-setting-copy strong {
-  font-size: 14px;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
   line-height: 1.35;
 }
 
 .access-setting-copy span {
-  color: var(--muted-foreground);
-  font-size: 12px;
+  color: var(--cc-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
 }
 
 .policy-decision-trace[open] summary > svg:last-child,
@@ -334,6 +360,12 @@
 
 .policy-layer-disclosure summary strong {
   white-space: nowrap;
+}
+
+.access-settings-list > .policy-layer-disclosure summary,
+.access-settings-list > .runtime-policy-summary {
+  min-height: 58px;
+  padding: 10px 16px;
 }
 
 .policy-rule-readout {
@@ -426,12 +458,23 @@
 
 .structured-policy-editor > [data-slot="tabs"] > [data-slot="tabs-list"] {
   width: 100%;
+  justify-content: flex-start;
   border-bottom: 1px solid var(--border);
 }
 
 .structured-policy-editor > [data-slot="tabs"] > [data-slot="tabs-list"] > [data-slot="tabs-trigger"] {
   flex: 0 0 auto;
   min-width: 112px;
+  color: var(--cc-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.structured-policy-editor
+  > [data-slot="tabs"]
+  > [data-slot="tabs-list"]
+  > [data-slot="tabs-trigger"][data-state="active"] {
+  color: var(--cc-text);
 }
 
 .policy-allow-mode {
@@ -446,8 +489,11 @@
 .policy-allow-mode legend {
   grid-column: 1 / -1;
   margin-bottom: 2px;
-  font-size: 13px;
-  font-weight: 620;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .policy-allow-mode label {
@@ -484,12 +530,16 @@
 }
 
 .policy-allow-mode strong {
-  font-size: 13px;
+  color: var(--cc-text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .policy-allow-mode small {
-  color: var(--muted-foreground);
-  font-size: 12px;
+  color: var(--cc-muted);
+  font-size: 11.5px;
   line-height: 1.45;
 }
 
@@ -500,8 +550,11 @@
 
 .policy-rule-heading h4 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 660;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .policy-rule-heading p,
@@ -519,6 +572,13 @@
 .policy-rule-add [data-slot="input"],
 .policy-advanced-grid textarea {
   font-family: var(--font-mono);
+}
+
+.policy-rule-add [data-slot="input"] {
+  height: 32px;
+  min-height: 32px;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .policy-rule-error,
@@ -572,8 +632,11 @@
 }
 
 .policy-advanced-editor summary {
-  font-size: 13px;
-  font-weight: 620;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .policy-advanced-editor > p {
@@ -662,9 +725,84 @@
   justify-self: end;
 }
 
+.access-panel > .table-panel {
+  overflow: hidden;
+  border: 1px solid var(--cc-border);
+  border-radius: 12px;
+  background: var(--cc-card);
+}
+
+.access-panel > .table-panel .empty-state.compact {
+  grid-template-columns: 32px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  justify-items: start;
+  column-gap: 12px;
+  row-gap: 4px;
+  min-height: 108px;
+  padding: 16px 18px;
+  border-radius: 0;
+  background: var(--cc-card);
+}
+
+.access-panel > .table-panel .empty-state.compact > svg {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.access-panel > .table-panel .empty-state.compact strong {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.access-panel > .table-panel .empty-state.compact p {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.access-panel > .table-panel .empty-state.compact strong {
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.access-panel > .table-panel .empty-state.compact p {
+  color: var(--cc-muted);
+  font-size: 11.5px;
+}
+
 .token-dialog-form {
   display: grid;
   gap: 14px;
+}
+
+.policy-token-dialog .field {
+  gap: 6px;
+  color: var(--cc-text);
+  font-weight: 400;
+}
+
+.policy-token-dialog .field > span {
+  color: var(--cc-text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.policy-token-dialog .field > [data-slot="input"],
+.policy-token-dialog .field > [data-slot="textarea"] {
+  color: var(--cc-text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.policy-token-dialog .policy-advanced-grid > .field > [data-slot="textarea"] {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 400;
 }
 
 @media (max-width: 960px) {

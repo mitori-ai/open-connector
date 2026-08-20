@@ -4,11 +4,11 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useTranslate } from "@embra/i18n/react";
-import { Activity, ArrowRight, ArrowUpRight, Cable, RefreshCw, TerminalSquare } from "lucide-react";
+import { Activity, ArrowRight, ArrowUpRight, Cable, CheckCircle2, TerminalSquare } from "lucide-react";
 import { Link } from "react-router";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { createOverviewSummary, sortProviders } from "./model";
-import { EmptyState, ProviderIcon } from "./shared-ui";
+import { EmptyState, PageHead, ProviderIcon } from "./shared-ui";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
@@ -49,6 +49,15 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
   );
   const capabilityCells: CapabilityStatusCellProps[] = [
     {
+      icon: CheckCircle2,
+      label: t("overview.runtimeReady"),
+      value: t("overview.ready"),
+      meta: t("overview.connectedProviders", { count: summary.connectedCount }),
+      badgeLabel: t("overview.ready"),
+      badgeTone: "success",
+      to: "/overview",
+    },
+    {
       icon: Cable,
       providerIcons: providerIconSources,
       label: t("overview.metrics.providers"),
@@ -80,21 +89,17 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
 
   return (
     <div className="page-stack overview-page">
-      <Card className="runtime-strip">
-        <div>
-          <strong>{t("overview.runtimeReady")}</strong>
-          <span>{t("overview.connectedProviders", { count: summary.connectedCount })}</span>
-        </div>
-        <Button variant="outline" size="sm" onClick={props.onRefresh}>
-          <RefreshCw size={15} />
-          {t("common.refresh")}
-        </Button>
-      </Card>
+      <PageHead
+        title={t("shell.headings.overview.title")}
+        description={t("shell.headings.overview.subtitle")}
+        refreshLabel={t("common.refresh")}
+        onRefresh={props.onRefresh}
+      />
 
       <section className="content-grid">
         <Card className="detail-panel overview-capability-panel">
           <div className="section-heading-row">
-            <h2>{t("overview.capabilityStatus")}</h2>
+            <h2 className="cc-section-title">{t("overview.capabilityStatus")}</h2>
           </div>
           <div className="overview-capability-grid">
             {capabilityCells.map((cell) => (
@@ -117,8 +122,8 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
       <section className="content-grid overview-activity-grid">
         <Card className="list-panel overview-call-trend-panel">
           <div className="table-panel-heading">
-            <h2>{t("overview.callTrend")}</h2>
-            <Button asChild variant="outline" size="sm">
+            <h2 className="cc-section-title">{t("overview.callTrend")}</h2>
+            <Button className="cc-button" asChild variant="outline" size="sm">
               <Link to="/runs">
                 {t("overview.viewRuns")}
                 <ArrowUpRight size={15} />
@@ -187,8 +192,8 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
 
         <Card className="list-panel overview-recent-calls-panel">
           <div className="table-panel-heading">
-            <h2>{t("overview.recentCalls")}</h2>
-            <Button asChild variant="outline" size="sm">
+            <h2 className="cc-section-title">{t("overview.recentCalls")}</h2>
+            <Button className="cc-button" asChild variant="outline" size="sm">
               <Link to="/runs">
                 {t("overview.viewRuns")}
                 <ArrowUpRight size={15} />

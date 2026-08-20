@@ -7,7 +7,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { apiGet } from "./api";
 import { compactJson, formatDate, formatDuration } from "./model";
-import { Badge, EmptyState, InlineError } from "./shared-ui";
+import { Badge, EmptyState, InlineError, PageHead } from "./shared-ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 interface RunsPageProps {
   initialRuns: RunLog[];
   nextCursor?: string;
+  onRefresh?: () => void;
 }
 
 interface RunServiceOption {
@@ -127,7 +128,13 @@ export function RunsPage(props: RunsPageProps): ReactNode {
 
   return (
     <TooltipProvider>
-      <div className="page-stack runs-page">
+      <div className={`page-stack runs-page ${runs.length === 0 ? "runs-page-empty" : ""}`}>
+        <PageHead
+          title={t("shell.headings.runs.title")}
+          description={t("shell.headings.runs.subtitle")}
+          refreshLabel={t("common.refresh")}
+          onRefresh={props.onRefresh}
+        />
         <section className="page-toolbar runs-toolbar">
           <form className="run-action-filter" onSubmit={submitActionFilter}>
             <Input
@@ -175,7 +182,7 @@ export function RunsPage(props: RunsPageProps): ReactNode {
           </RunSelect>
         </section>
 
-        <section className="table-panel">
+        <section className={`table-panel ${runs.length === 0 ? "runs-empty-panel" : ""}`}>
           {runs.length === 0 ? (
             <EmptyState title={t("runs.noRunsTitle")} description={t("runs.noRunsDescription")} icon={null} />
           ) : (

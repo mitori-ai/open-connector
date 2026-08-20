@@ -22,7 +22,7 @@ import {
   parameterSummaries,
   usableConnectionsForService,
 } from "./model";
-import { Badge, EmptyState, TagList } from "./shared-ui";
+import { Badge, EmptyState, PageHead, TagList } from "./shared-ui";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -120,6 +120,12 @@ export function ActionsPage(props: ActionsPageProps): ReactNode {
 
   return (
     <div className="page-stack actions-page">
+      <PageHead
+        title={t("shell.headings.actions.title")}
+        description={t("shell.headings.actions.subtitle")}
+        refreshLabel={t("common.refresh")}
+        onRefresh={props.onRefresh}
+      />
       <section className="page-toolbar actions-toolbar">
         <label className="relative flex min-w-56 flex-1 items-center">
           <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
@@ -267,22 +273,26 @@ function ActionDetail(props: ActionDetailProps): ReactNode {
       </div>
       <p className="detail-description">{props.action.description}</p>
       <div className="button-row action-command-row">
-        <Button disabled={!props.action.execution.locallyExecutable || !fullAction} onClick={() => setDebugOpen(true)}>
+        <Button
+          className="cc-button"
+          disabled={!props.action.execution.locallyExecutable || !fullAction}
+          onClick={() => setDebugOpen(true)}
+        >
           <Play size={16} />
           {t("actions.debugAction")}
         </Button>
-        <Button asChild variant="outline" size="sm">
+        <Button className="cc-button" asChild variant="outline" size="sm">
           <a href={`/api/actions/${props.action.id}/agent.md`} target="_blank" rel="noreferrer">
             <ExternalLink size={15} />
             Agent.md
           </a>
         </Button>
-        <Button asChild variant="outline" size="sm">
+        <Button className="cc-button" asChild variant="outline" size="sm">
           <Link to={`/providers/${props.action.service}`}>{t("actions.provider")}</Link>
         </Button>
       </div>
       <div className="panel-section">
-        <h3>{t("actions.requiredScopes")}</h3>
+        <h3 className="cc-section-title">{t("actions.requiredScopes")}</h3>
         <TagList values={props.action.requiredScopes} empty={t("providers.noScopes")} />
       </div>
       {fullAction && examples ? (
@@ -316,7 +326,7 @@ function ParameterList(props: { schema: JsonSchema }): ReactNode {
   return (
     <details className="parameter-card">
       <summary>
-        <span>{t("actions.parameters")}</span>
+        <span className="cc-section-title">{t("actions.parameters")}</span>
         <Badge>{t("actions.fieldsCount", { count: parameters.length })}</Badge>
       </summary>
       {parameters.length === 0 ? (
@@ -358,14 +368,14 @@ function ExampleTabs(props: ExampleTabsProps): ReactNode {
         <div className="tab-row">
           <TabsList aria-label={t("actions.actionExamples")}>
             {tabs.map((tab) => (
-              <TabsTrigger key={tab.id} value={tab.id}>
+              <TabsTrigger className="cc-button action-example-tab" key={tab.id} value={tab.id}>
                 {tab.label}
               </TabsTrigger>
             ))}
           </TabsList>
           <div className="button-row tight">
             {active === "agent" ? (
-              <Button asChild variant="outline" size="sm">
+              <Button className="cc-button" asChild variant="outline" size="sm">
                 <a href={`/api/actions/${props.action.id}/agent.md`} target="_blank" rel="noreferrer">
                   <ExternalLink size={15} />
                   {t("actions.open")}
