@@ -232,7 +232,28 @@ function memoryAssets(files: Record<string, unknown>): AssetsBinding {
 
 class UnusedD1Database implements D1DatabaseBinding {
   prepare(query: string): D1PreparedStatementBinding {
+    if (query.includes("from runtime_tokens") && query.includes("order by created_at desc, id desc")) {
+      return new EmptyD1PreparedStatement();
+    }
     throw new Error(`Unexpected D1 query: ${query}`);
+  }
+}
+
+class EmptyD1PreparedStatement implements D1PreparedStatementBinding {
+  bind(): D1PreparedStatementBinding {
+    return this;
+  }
+
+  async first<T = Record<string, unknown>>(): Promise<T | null> {
+    return null;
+  }
+
+  async all<T = Record<string, unknown>>(): Promise<{ results: T[] }> {
+    return { results: [] };
+  }
+
+  async run(): Promise<{ success: boolean; meta: { changes?: number } }> {
+    return { success: true, meta: { changes: 0 } };
   }
 }
 
