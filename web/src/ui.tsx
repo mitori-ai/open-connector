@@ -7,7 +7,7 @@ import type {
   RuntimePolicyState,
   RuntimeTokenSummary,
 } from "./model";
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode, SubmitEvent } from "react";
 
 import { useTranslate } from "@embra/i18n/react";
 import {
@@ -401,6 +401,7 @@ function AppShell(props: {
               element={
                 <AccessPage
                   providers={props.data.providers}
+                  connections={props.data.connections}
                   tokens={props.data.runtimeTokens}
                   policy={props.data.runtimePolicy ?? emptyData.runtimePolicy!}
                   onRefresh={props.onRefresh}
@@ -426,7 +427,7 @@ export function UnlockView(props: UnlockViewProps): ReactNode {
   const t = useTranslate();
   const [token, setToken] = useState("");
 
-  function submit(event: FormEvent): void {
+  function submit(event: SubmitEvent<HTMLFormElement>): void {
     event.preventDefault();
     props.onUnlock(token.trim());
   }

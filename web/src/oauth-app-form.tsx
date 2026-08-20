@@ -1,5 +1,5 @@
 import type { AuthDefinition, CredentialField, OAuthConfig, ProviderDefinition } from "./model";
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode, SubmitEvent } from "react";
 
 import { useTranslate } from "@embra/i18n/react";
 import { Settings, Trash2 } from "lucide-react";
@@ -73,7 +73,7 @@ export function OAuthAppForm(props: OAuthAppFormProps): ReactNode {
     setStatus(null);
   }, [props.provider.service, props.config?.clientId, clientConfigFields]);
 
-  async function submit(event: FormEvent): Promise<void> {
+  async function submit(event: SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setStatus(t("providers.oauthClientSettings.saving"));
     try {

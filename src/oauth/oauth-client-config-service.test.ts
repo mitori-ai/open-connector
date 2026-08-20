@@ -48,7 +48,7 @@ describe("OAuthClientConfigService", () => {
         clientSecret: "client-secret",
         requestedScopes: ["admin"],
       }),
-    ).toThrowError("requestedScopes contains a scope not declared by example: admin.");
+    ).toThrow("requestedScopes contains a scope not declared by example: admin.");
   });
 
   it("drops stored scopes the provider no longer declares instead of failing reads", async () => {
@@ -95,7 +95,7 @@ describe("OAuthClientConfigService", () => {
         clientSecret: "client-secret",
         requestedScopes: [],
       }),
-    ).toThrowError("requestedScopes must contain at least one scope.");
+    ).toThrow("requestedScopes must contain at least one scope.");
   });
 });
 

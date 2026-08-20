@@ -234,7 +234,7 @@ class RuntimeTokenListOnlyD1Database implements D1DatabaseBinding {
   prepare(query: string): D1PreparedStatementBinding {
     const normalizedQuery = query.replace(/\s+/g, " ").trim();
     const runtimeTokenListQuery = [
-      "select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, created_at, last_used_at",
+      "select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at",
       "from runtime_tokens",
       "where revoked_at is null",
       "order by created_at desc, id desc",

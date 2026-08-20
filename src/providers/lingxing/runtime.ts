@@ -1,21 +1,21 @@
 import type { CredentialValidationResult, ExecutionResult } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ProviderFetch, ProviderRuntimeHandler } from "../provider-runtime.ts";
+import type { Client } from "@modelcontextprotocol/client";
 
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
+import { UnauthorizedError } from "@modelcontextprotocol/client";
+import { SdkHttpError } from "@modelcontextprotocol/client";
+import { ProtocolError, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { optionalRecord, requiredString } from "../../core/cast.ts";
 import { assertPublicHttpUrl } from "../../core/request.ts";
+import { withMcpClient } from "../mcp-client.ts";
 import { providerUserAgent, ProviderRequestError, toProviderExecutionError } from "../provider-runtime.ts";
 
 const lingxingMcpHost = "openmcp.lingxing.com";
 const lingxingRequestTimeoutMs = 30_000;
 const lingxingToolIntervalMs = 1_000;
 const maximumTrackedRateLimitKeys = 1_024;
-const lingxingMcpJsonSchemaValidator = new CfWorkerJsonSchemaValidator();
 
 interface LingxingCredential {
   endpoint: URL;
@@ -100,7 +100,7 @@ class LingxingRequestError extends ProviderRequestError {
   }
 }
 
-export const lingxingActionHandlers: Record<string, ProviderRuntimeHandler<LingxingContext>> = {
+export const lingxingActionHandlers: ProviderActionHandlers<"lingxing", ProviderRuntimeHandler<LingxingContext>> = {
   list_tools(_input, context) {
     return listLingxingTools(context);
   },
@@ -217,7 +217,6 @@ export async function callLingxingTool(
           name: toolName,
           arguments: argumentsValue,
         },
-        undefined,
         {
           timeout: lingxingRequestTimeoutMs,
           signal: context.signal,
@@ -270,33 +269,18 @@ async function withLingxingMcpClient<T>(context: LingxingContext, run: (client: 
   const headers = new Headers();
   headers.set("X-Mcp-Key", context.mcpKey);
   headers.set("user-agent", providerUserAgent);
-  const transport = new StreamableHTTPClientTransport(context.endpoint, {
-    fetch: createLingxingRateLimitedFetch(context.fetcher, hashLingxingRateLimitKey(context)),
-    requestInit: {
+  return withMcpClient(
+    {
+      endpoint: context.endpoint,
+      transport: "streamable_http",
+      fetcher: createLingxingRateLimitedFetch(context.fetcher, hashLingxingRateLimitKey(context)),
       headers,
       redirect: "error",
       signal: context.signal,
+      mapError: mapLingxingMcpError,
     },
-  });
-  const client = new Client(
-    {
-      name: "oomol-connect-lingxing",
-      version: "1.0.0",
-    },
-    { jsonSchemaValidator: lingxingMcpJsonSchemaValidator },
+    run,
   );
-
-  try {
-    await client.connect(transport, {
-      timeout: lingxingRequestTimeoutMs,
-      signal: context.signal,
-    });
-    return await run(client);
-  } catch (error) {
-    throw mapLingxingMcpError(error);
-  } finally {
-    await client.close().catch(() => undefined);
-  }
 }
 
 function readLingxingCredential(values: Record<string, string>): LingxingCredential {
@@ -363,8 +347,8 @@ function mapLingxingMcpError(error: unknown): ProviderRequestError {
   if (error instanceof UnauthorizedError) {
     return new ProviderRequestError(401, "Lingxing MCP token is invalid or expired", error);
   }
-  if (error instanceof StreamableHTTPError) {
-    const status = error.code;
+  if (error instanceof SdkHttpError) {
+    const status = error.status;
     return new ProviderRequestError(
       status === 401 || status === 403
         ? 401
@@ -377,10 +361,11 @@ function mapLingxingMcpError(error: unknown): ProviderRequestError {
       error,
     );
   }
-  if (error instanceof McpError) {
-    return error.code === ErrorCode.RequestTimeout
-      ? new ProviderRequestError(504, "Lingxing MCP request timed out", error)
-      : new ProviderRequestError(502, `Lingxing MCP request failed: ${error.message}`, error);
+  if (error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) {
+    return new ProviderRequestError(504, "Lingxing MCP request timed out", error);
+  }
+  if (error instanceof ProtocolError) {
+    return new ProviderRequestError(502, `Lingxing MCP request failed: ${error.message}`, error);
   }
   if (isAbortError(error)) {
     return new ProviderRequestError(504, "Lingxing MCP request timed out", error);

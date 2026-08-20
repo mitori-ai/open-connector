@@ -6,7 +6,7 @@ import type {
   ProviderConnectionStatus,
   ProviderDefinition,
 } from "./model";
-import type { CSSProperties, FormEvent, ReactNode } from "react";
+import type { CSSProperties, ReactNode, SubmitEvent } from "react";
 
 import { useTranslate } from "@embra/i18n/react";
 import {
@@ -1220,7 +1220,7 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
     }
   }, [customOAuthClientAvailable, props.oauthClientMode, props.onOAuthClientModeChange]);
 
-  async function submit(event: FormEvent): Promise<void> {
+  async function submit(event: SubmitEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!canSubmit) {
       if (needsOAuthClient) {

@@ -1,6 +1,6 @@
 import type { CredentialValidators, ProviderExecutors } from "../../core/types.ts";
+import type { ProviderActionHandlers } from "../provider-runtime.ts";
 import type { ApiKeyProviderContext } from "../provider-runtime.ts";
-import type { CrunchbaseActionName } from "./actions.ts";
 
 import { compactObject, optionalString, requiredRecord, requiredString } from "../../core/cast.ts";
 import {
@@ -18,7 +18,7 @@ const crunchbaseRequestTimeoutMs = 30_000;
 type CrunchbasePhase = "validate" | "execute";
 type CrunchbaseActionHandler = (input: Record<string, unknown>, context: ApiKeyProviderContext) => Promise<unknown>;
 
-export const crunchbaseActionHandlers: Record<CrunchbaseActionName, CrunchbaseActionHandler> = {
+export const crunchbaseActionHandlers: ProviderActionHandlers<"crunchbase", CrunchbaseActionHandler> = {
   async autocomplete_entities(input, context) {
     const payload = await requestCrunchbaseJson({
       context,
@@ -70,6 +70,51 @@ export const crunchbaseActionHandlers: Record<CrunchbaseActionName, CrunchbaseAc
       entities: requireArray(record.entities, "Crunchbase returned invalid organization search entities"),
       raw: record,
     };
+  },
+  async search_acquisitions(input, context) {
+    assertSingleCursor(input);
+    const payload = await requestCrunchbaseJson({
+      context,
+      method: "POST",
+      path: "/data/searches/acquisitions",
+      phase: "execute",
+      body: compactObject({
+        field_ids: input.fieldIds,
+        query: input.query,
+        order: input.order,
+        limit: input.limit,
+        after_id: input.afterId,
+        before_id: input.beforeId,
+      }),
+    });
+    const record = requireRecord(payload, "Crunchbase returned invalid acquisition search payload");
+    return {
+      count: requireInteger(record.count, "Crunchbase returned invalid acquisition search count"),
+      entities: requireArray(record.entities, "Crunchbase returned invalid acquisition search entities"),
+      raw: record,
+    };
+  },
+  async get_acquisition(input, context) {
+    const entityId = requiredString(input.entityId, "entityId", providerInputError);
+    const payload = await requestCrunchbaseJson({
+      context,
+      path: `/data/entities/acquisitions/${encodeURIComponent(entityId)}`,
+      phase: "execute",
+      query: compactObject({ field_ids: joinStringArray(input.fieldIds), card_ids: joinStringArray(input.cardIds) }),
+    });
+    const record = requireRecord(payload, "Crunchbase returned invalid acquisition payload");
+    return { acquisition: record, raw: record };
+  },
+  async get_organization_acquisitions(input, context) {
+    const relationship = requiredString(input.relationship, "relationship", providerInputError);
+    const cardId = relationship === "acquiree" ? "acquiree_acquisitions" : "acquirer_acquisitions";
+    const record = await requestOrganizationCard(input, context, cardId);
+    return { acquisitions: requireOrganizationCardItems(record, cardId), raw: record };
+  },
+  async get_organization_ipos(input, context) {
+    const cardId = "ipos";
+    const record = await requestOrganizationCard(input, context, cardId);
+    return { ipos: requireOrganizationCardItems(record, cardId), raw: record };
   },
 };
 
@@ -186,6 +231,38 @@ function appendQueryValue(url: URL, key: string, value: unknown): void {
 
 function joinStringArray(value: unknown): string | undefined {
   return Array.isArray(value) ? value.map((item) => String(item)).join(",") : undefined;
+}
+
+async function requestOrganizationCard(
+  input: Record<string, unknown>,
+  context: ApiKeyProviderContext,
+  cardId: string,
+): Promise<Record<string, unknown>> {
+  assertSingleCursor(input);
+  const organizationId = requiredString(input.organizationId, "organizationId", providerInputError);
+  const payload = await requestCrunchbaseJson({
+    context,
+    path: `/data/entities/organizations/${encodeURIComponent(organizationId)}/cards/${cardId}`,
+    phase: "execute",
+    query: compactObject({
+      card_field_ids: joinStringArray(input.cardFieldIds),
+      after_id: optionalString(input.afterId),
+      before_id: optionalString(input.beforeId),
+      order: optionalString(input.order),
+      limit: input.limit,
+    }),
+  });
+  return requireRecord(payload, "Crunchbase returned invalid organization card payload");
+}
+
+function requireOrganizationCardItems(record: Record<string, unknown>, cardId: string): unknown[] {
+  const cards = requireRecord(record.cards, "Crunchbase returned invalid organization cards");
+  return requireArray(cards[cardId], `Crunchbase returned invalid ${cardId} card`);
+}
+
+function assertSingleCursor(input: Record<string, unknown>): void {
+  if (input.afterId !== undefined && input.beforeId !== undefined)
+    throw new ProviderRequestError(400, "afterId and beforeId cannot be used together");
 }
 
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
