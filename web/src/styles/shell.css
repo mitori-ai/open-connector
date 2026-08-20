@@ -253,9 +253,9 @@
 
 .main {
   min-width: 0;
-  width: min(1240px, calc(100% - 48px));
+  width: min(1600px, 100%);
   margin: 0 auto;
-  padding: 24px 0 56px;
+  padding: 26px 40px 48px;
 }
 
 .cc-page-head {
@@ -268,7 +268,7 @@
 
 .cc-kicker {
   color: var(--primary);
-  font-size: 9.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.16em;
   line-height: 1.2;
@@ -333,7 +333,7 @@
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  padding-bottom: 28px;
+  padding-bottom: 48px;
 }
 
 .page-header {
@@ -440,10 +440,10 @@
 
   .main {
     display: block;
-    width: calc(100% - 32px);
+    width: 100%;
     height: auto;
     overflow: visible;
-    padding: 24px 0 40px;
+    padding: 26px 32px 48px;
   }
 
   .main-region,
@@ -490,8 +490,12 @@
   }
 
   .main {
-    width: calc(100% - 24px);
-    padding: 18px 0 32px;
+    width: 100%;
+    padding: 20px 16px 36px;
+  }
+
+  .main-browser {
+    padding-bottom: 36px;
   }
 
   .shell-header {
