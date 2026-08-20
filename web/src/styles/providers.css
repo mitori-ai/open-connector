@@ -374,6 +374,18 @@
   margin-bottom: 0;
 }
 
+.provider-connection-card > .auth-method-control > [data-slot="toggle-group-item"] {
+  color: var(--cc-muted);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.provider-connection-card > .auth-method-control > [data-slot="toggle-group-item"][data-state="on"] {
+  color: var(--cc-text);
+}
+
 .connection-manager {
   display: grid;
   gap: 12px;
