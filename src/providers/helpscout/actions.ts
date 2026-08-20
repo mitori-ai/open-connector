@@ -46,6 +46,27 @@ const customFieldValuesSchema = s.array(
     }),
   }),
 );
+const legacyMailboxFilter = s.string("A comma-separated list of Help Scout inbox IDs.", {
+  pattern: "^\\d+(,\\d+)*$",
+  minLength: 1,
+  maxLength: 200,
+});
+const legacyTagFilter = s.string("A comma-separated list of Help Scout conversation tags.", {
+  minLength: 1,
+  maxLength: 500,
+});
+const legacyCustomFieldsFilter = s.string(
+  "Help Scout custom field filters in the documented id:value,id:value format.",
+  { minLength: 1, maxLength: 500 },
+);
+const currentUserSchema = s.object("The safe identity profile for the authenticated Help Scout user.", {
+  id: positiveId("The authenticated Help Scout user ID."),
+  firstName: s.nullableString("The authenticated user's first name."),
+  lastName: s.nullableString("The authenticated user's last name."),
+  email: s.nullableString("The authenticated user's email address."),
+  role: s.nullableString("The authenticated user's Help Scout role."),
+  companyId: s.nullableInteger("The Help Scout company ID."),
+});
 
 const customerIdentifierFields = {
   customerId: positiveId("The existing Help Scout customer ID."),
@@ -68,6 +89,13 @@ const pagedCollectionOutput = (name: string, fieldName: string) =>
   });
 
 export const helpscoutActions: ActionDefinition[] = [
+  defineProviderAction(service, {
+    name: "get_current_user",
+    description: "Retrieve a safe identity profile for the authenticated Help Scout user.",
+    requiredScopes: [readScope],
+    inputSchema: s.object("No input is required.", {}),
+    outputSchema: s.object("The authenticated Help Scout identity profile.", { profile: currentUserSchema }),
+  }),
   defineProviderAction(service, {
     name: "list_inboxes",
     description: "List the Help Scout inboxes available to the connected user.",
@@ -206,6 +234,13 @@ export const helpscoutActions: ActionDefinition[] = [
         ]),
         sortOrder: s.stringEnum("The conversation sort direction.", ["asc", "desc"]),
         embedThreads: s.boolean("Whether to embed thread previews in each returned conversation."),
+        embed: s.stringEnum("Embed the documented Help Scout sub-resource.", ["threads"]),
+        mailbox: legacyMailboxFilter,
+        folder: positiveId("The Help Scout folder ID used to filter conversations."),
+        tag: legacyTagFilter,
+        assignedTo: positiveId("The Help Scout user ID assigned to the conversations."),
+        number: positiveId("The human-facing Help Scout conversation number."),
+        customFieldsByIds: legacyCustomFieldsFilter,
       },
       {
         optional: [
@@ -221,6 +256,13 @@ export const helpscoutActions: ActionDefinition[] = [
           "sortField",
           "sortOrder",
           "embedThreads",
+          "embed",
+          "mailbox",
+          "folder",
+          "tag",
+          "assignedTo",
+          "number",
+          "customFieldsByIds",
         ],
       },
     ),
@@ -235,11 +277,25 @@ export const helpscoutActions: ActionDefinition[] = [
       {
         conversationId: positiveId("The Help Scout conversation ID."),
         embedThreads: s.boolean("Whether to embed thread previews in the conversation."),
+        embed: s.stringEnum("Embed the documented Help Scout conversation sub-resource.", ["threads"]),
       },
-      { optional: ["embedThreads"] },
+      { optional: ["embedThreads", "embed"] },
     ),
     outputSchema: s.object("The requested Help Scout conversation.", {
       conversation: rawProviderObject("The Help Scout conversation object."),
+    }),
+  }),
+  defineProviderAction(service, {
+    name: "update_conversation",
+    description: "Replace only the Help Scout conversation subject using the official JSON Patch operation.",
+    requiredScopes: [writeScope],
+    inputSchema: s.object("Input for the subject-only Help Scout conversation update.", {
+      conversationId: positiveId("The Help Scout conversation ID."),
+      subject: s.nonEmptyString("The new Help Scout conversation subject.", { maxLength: 10_000 }),
+    }),
+    outputSchema: s.object("The Help Scout conversation update result.", {
+      conversationId: positiveId("The Help Scout conversation ID updated."),
+      updated: s.boolean("Whether Help Scout accepted the subject update."),
     }),
   }),
   defineProviderAction(service, {

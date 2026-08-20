@@ -1,6 +1,11 @@
 import { optionalBoolean, optionalInteger, optionalRecord, optionalString } from "../../core/cast.ts";
 import { jsonObject } from "../../core/request.ts";
-import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  ProviderRequestError,
+  providerUserAgent,
+  readProviderTextBody,
+} from "../provider-runtime.ts";
 
 interface ApiKeyProviderActionInput {
   apiKey: string;
@@ -11,6 +16,7 @@ interface ApiKeyProviderActionInput {
 
 export const smartsuiteApiBaseUrl = "https://app.smartsuite.com/api/v1";
 const smartsuiteRequestTimeoutMs = 30_000;
+const smartsuiteMaxResponseBytes = 1024 * 1024;
 
 interface SmartsuiteActionInput extends ApiKeyProviderActionInput {
   actionName: string;
@@ -73,7 +79,8 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         tables: requireArray(await request({ path: "/applications/", query: { solution: solutionId } }), "tables"),
       };
     }
-    case "list_records": {
+    case "list_records":
+    case "search_records": {
       const tableId = readRequiredString(input.input.tableId, "tableId");
       const payload = optionalRecord(
         await request({
@@ -82,7 +89,9 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
           query: jsonObject({
             offset: stringifyOptionalInteger(optionalInteger(input.input.offset)),
             limit: stringifyOptionalInteger(optionalInteger(input.input.limit)),
-            all: stringifyOptionalBoolean(optionalBoolean(input.input.includeDeleted)),
+            all: stringifyOptionalBoolean(
+              optionalBoolean(input.input.includeDeleted) ?? optionalBoolean(input.input.all),
+            ),
           }),
           body: jsonObject({
             hydrated: optionalBoolean(input.input.hydrated),
@@ -173,7 +182,9 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
       signal: timeout.signal,
     });
     const payload = await readPayload(response, input.allowEmpty === true);
-    if (!response.ok) throw createSmartsuiteError(response, payload, input.phase);
+    if (!response.ok) {
+      throw createSmartsuiteError(response, payload, input.phase, input.apiKey, input.workspaceId);
+    }
     return payload;
   } catch (error) {
     if (error instanceof ProviderRequestError) throw error;
@@ -182,7 +193,9 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
     }
     throw new ProviderRequestError(
       502,
-      error instanceof Error ? `SmartSuite request failed: ${error.message}` : "SmartSuite request failed",
+      error instanceof Error
+        ? `SmartSuite request failed: ${redactSecrets(error.message, [input.apiKey, input.workspaceId])}`
+        : "SmartSuite request failed",
     );
   } finally {
     timeout.cleanup();
@@ -190,7 +203,7 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
 }
 
 async function readPayload(response: Response, allowEmpty: boolean) {
-  const text = await response.text();
+  const text = await readProviderTextBody(response, "SmartSuite response", smartsuiteMaxResponseBytes);
   if (text.trim() === "") {
     if (allowEmpty || !response.ok) return null;
     throw invalidPayload("response did not include JSON");
@@ -203,13 +216,21 @@ async function readPayload(response: Response, allowEmpty: boolean) {
   }
 }
 
-function createSmartsuiteError(response: Response, payload: unknown, phase: "validate" | "execute") {
+function createSmartsuiteError(
+  response: Response,
+  payload: unknown,
+  phase: "validate" | "execute",
+  apiKey: string,
+  workspaceId: string,
+) {
   const record = optionalRecord(payload);
-  const message =
+  const message = redactSecrets(
     optionalString(record?.message) ??
-    optionalString(record?.detail) ??
-    optionalString(record?.error) ??
-    `SmartSuite request failed with status ${response.status}`;
+      optionalString(record?.detail) ??
+      optionalString(record?.error) ??
+      `SmartSuite request failed with status ${response.status}`,
+    [apiKey, workspaceId],
+  );
   if (response.status === 429) return new ProviderRequestError(429, message);
   if (response.status === 401 || response.status === 403) {
     return new ProviderRequestError(phase === "validate" ? 400 : 401, message);
@@ -270,4 +291,14 @@ function stringifyOptionalBoolean(value: boolean | undefined) {
 
 function invalidPayload(message: string) {
   return new ProviderRequestError(502, `SmartSuite ${message}`);
+}
+
+function redactSecrets(message: string, secrets: readonly string[]) {
+  let redacted = message;
+  for (const secret of secrets) {
+    if (secret) {
+      redacted = redacted.split(secret).join("[redacted]");
+    }
+  }
+  return redacted;
 }

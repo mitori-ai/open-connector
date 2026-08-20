@@ -1,8 +1,14 @@
 import { compactObject, optionalBoolean, optionalInteger, optionalString } from "../../core/cast.ts";
-import { createProviderTimeout, ProviderRequestError, providerUserAgent } from "../provider-runtime.ts";
+import {
+  createProviderTimeout,
+  ProviderRequestError,
+  providerUserAgent,
+  readProviderTextBody,
+} from "../provider-runtime.ts";
 
 const helpscoutApiBaseUrl = "https://api.helpscout.net/v2";
 const helpscoutRequestTimeoutMs = 30_000;
+const helpscoutMaxResponseBytes = 1024 * 1024;
 
 class HelpscoutError extends ProviderRequestError {
   constructor(_code: string, message: string, status: number, _cause?: unknown, details?: unknown) {
@@ -27,6 +33,19 @@ interface HelpscoutRequestOptions extends HelpscoutActionContext {
 type HelpscoutActionHandler = (input: Record<string, unknown>, context: HelpscoutActionContext) => Promise<unknown>;
 
 export const helpscoutActionHandlers: Record<string, HelpscoutActionHandler> = {
+  async get_current_user(_input, context) {
+    const profile = await fetchHelpscoutCurrentUser(context.accessToken, context.fetcher);
+    return {
+      profile: {
+        id: requirePositiveInteger(profile.id, "Help Scout user id"),
+        firstName: optionalString(profile.firstName) ?? null,
+        lastName: optionalString(profile.lastName) ?? null,
+        email: optionalString(profile.email) ?? null,
+        role: optionalString(profile.role) ?? null,
+        companyId: optionalInteger(profile.companyId) ?? null,
+      },
+    };
+  },
   list_inboxes(input, context) {
     return executeCollectionRequest(
       "/mailboxes",
@@ -103,17 +122,18 @@ export const helpscoutActionHandlers: Record<string, HelpscoutActionHandler> = {
   list_conversations(input, context) {
     return executeCollectionRequest("/conversations", "conversations", context, {
       page: optionalInteger(input.page),
-      mailbox: joinNumberArray(input.inboxIds),
-      folder: optionalInteger(input.folderId),
+      mailbox: joinNumberArray(input.inboxIds) ?? readOptionalTrimmedString(input.mailbox),
+      folder: optionalInteger(input.folderId) ?? optionalInteger(input.folder),
       status: readOptionalTrimmedString(input.status),
-      tag: joinStringArray(input.tagNames),
-      assigned_to: optionalInteger(input.assignedUserId),
-      number: optionalInteger(input.conversationNumber),
+      tag: joinStringArray(input.tagNames) ?? readOptionalTrimmedString(input.tag),
+      assigned_to: optionalInteger(input.assignedUserId) ?? optionalInteger(input.assignedTo),
+      number: optionalInteger(input.conversationNumber) ?? optionalInteger(input.number),
       modifiedSince: readOptionalTrimmedString(input.modifiedSince),
       query: readOptionalTrimmedString(input.query),
       sortField: readOptionalTrimmedString(input.sortField),
       sortOrder: readOptionalTrimmedString(input.sortOrder),
-      embed: optionalBoolean(input.embedThreads) ? "threads" : undefined,
+      embed: optionalBoolean(input.embedThreads) ? "threads" : readOptionalTrimmedString(input.embed),
+      customFieldsByIds: readOptionalTrimmedString(input.customFieldsByIds),
     });
   },
 
@@ -124,12 +144,24 @@ export const helpscoutActionHandlers: Record<string, HelpscoutActionHandler> = {
       path: `/conversations/${conversationId}`,
       apiVersion: 3,
       query: {
-        embed: optionalBoolean(input.embedThreads) ? "threads" : undefined,
+        embed: optionalBoolean(input.embedThreads) ? "threads" : readOptionalTrimmedString(input.embed),
       },
     });
     return {
       conversation: requireProviderObject(payload, "Help Scout conversation response"),
     };
+  },
+
+  async update_conversation(input, context) {
+    const conversationId = requirePositiveInteger(input.conversationId, "conversationId");
+    const subject = requireNonEmptyString(input.subject, "subject");
+    await requestHelpscout({
+      ...context,
+      path: `/conversations/${conversationId}`,
+      method: "PATCH",
+      body: { op: "replace", path: "/subject", value: subject },
+    });
+    return { conversationId, updated: true };
   },
 
   list_threads(input, context) {
@@ -424,7 +456,7 @@ async function requestHelpscout(options: HelpscoutRequestOptions) {
 
     const payload = await readHelpscoutPayload(response);
     if (!response.ok) {
-      throw createHelpscoutError(response, payload, options.phase ?? "action");
+      throw createHelpscoutError(response, payload, options.phase ?? "action", options.accessToken);
     }
     return { response, payload };
   } catch (error) {
@@ -436,7 +468,9 @@ async function requestHelpscout(options: HelpscoutRequestOptions) {
     }
     throw new HelpscoutError(
       "provider_error",
-      error instanceof Error ? `Help Scout request failed: ${error.message}` : "Help Scout request failed",
+      error instanceof Error
+        ? `Help Scout request failed: ${redactSecrets(error.message, [options.accessToken])}`
+        : "Help Scout request failed",
       502,
     );
   } finally {
@@ -445,7 +479,7 @@ async function requestHelpscout(options: HelpscoutRequestOptions) {
 }
 
 async function readHelpscoutPayload(response: Response) {
-  const text = await response.text();
+  const text = await readProviderTextBody(response, "Help Scout response", helpscoutMaxResponseBytes);
   if (!text.trim()) {
     return null;
   }
@@ -456,11 +490,13 @@ async function readHelpscoutPayload(response: Response) {
   }
 }
 
-function createHelpscoutError(response: Response, payload: unknown, phase: "account" | "action") {
-  const message =
+function createHelpscoutError(response: Response, payload: unknown, phase: "account" | "action", accessToken: string) {
+  const message = redactSecrets(
     extractHelpscoutErrorMessage(payload) ||
-    response.statusText ||
-    `Help Scout request failed with status ${response.status}`;
+      response.statusText ||
+      `Help Scout request failed with status ${response.status}`,
+    [accessToken],
+  );
   const errorCode =
     response.status === 401 || (phase === "account" && response.status === 403)
       ? "credential_expired"
@@ -602,4 +638,14 @@ function joinNumberArray(value: unknown) {
     throw new HelpscoutError("invalid_input", "inboxIds must be an integer array", 400);
   }
   return value.map((item) => requirePositiveInteger(item, "inboxIds")).join(",");
+}
+
+function redactSecrets(message: string, secrets: readonly string[]) {
+  let redacted = message;
+  for (const secret of secrets) {
+    if (secret) {
+      redacted = redacted.split(secret).join("[redacted]");
+    }
+  }
+  return redacted;
 }

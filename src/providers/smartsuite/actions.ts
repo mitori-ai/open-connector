@@ -62,6 +62,7 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
         offset: s.nonNegativeInteger("The number of matching records to skip."),
         limit: s.integer("The maximum number of records to return.", { minimum: 1, maximum: 1000 }),
         includeDeleted: s.boolean("Whether to include records marked as deleted."),
+        all: s.boolean("Compatibility alias for includeDeleted."),
         hydrated: s.boolean("Whether to include human-readable labels for supported field types."),
         sort: s.array(
           "SmartSuite sort directives in the order they should be applied.",
@@ -69,7 +70,7 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
         ),
         filter: dynamicObjectSchema("A SmartSuite group filter using the official filter syntax."),
       },
-      { optional: ["offset", "limit", "includeDeleted", "hydrated", "sort", "filter"] },
+      { optional: ["offset", "limit", "includeDeleted", "all", "hydrated", "sort", "filter"] },
     ),
     outputSchema: s.object("A page of SmartSuite records.", {
       total: s.nonNegativeInteger("The total number of matching records."),
@@ -77,6 +78,36 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
       limit: s.nonNegativeInteger("The response page limit."),
       records: s.array("The records returned for this page.", dynamicRecordSchema),
     }),
+    followUpActions: ["smartsuite.get_record", "smartsuite.search_records"],
+  }),
+  defineProviderAction(service, {
+    name: "search_records",
+    description: "Search SmartSuite records using the official records list endpoint and a required filter.",
+    requiredScopes: [],
+    inputSchema: s.object(
+      "Filters records in a SmartSuite Table.",
+      {
+        tableId: recordIdentityInputFields.tableId,
+        offset: s.nonNegativeInteger("The number of matching records to skip."),
+        limit: s.integer("The maximum number of records to return.", { minimum: 1, maximum: 1000 }),
+        includeDeleted: s.boolean("Whether to include records marked as deleted."),
+        all: s.boolean("Compatibility alias for includeDeleted."),
+        hydrated: s.boolean("Whether to include human-readable labels for supported field types."),
+        sort: s.array(
+          "SmartSuite sort directives in the order they should be applied.",
+          dynamicObjectSchema("A SmartSuite sort directive."),
+        ),
+        filter: dynamicObjectSchema("A required SmartSuite group filter using the official filter syntax."),
+      },
+      { optional: ["offset", "limit", "includeDeleted", "all", "hydrated", "sort"] },
+    ),
+    outputSchema: s.object("A page of SmartSuite records.", {
+      total: s.nonNegativeInteger("The total number of matching records."),
+      offset: s.nonNegativeInteger("The current pagination offset."),
+      limit: s.nonNegativeInteger("The response page limit."),
+      records: s.array("The records returned for this page.", dynamicRecordSchema),
+    }),
+    followUpActions: ["smartsuite.get_record", "smartsuite.update_record"],
   }),
   defineProviderAction(service, {
     name: "get_record",
@@ -93,6 +124,7 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     outputSchema: s.object("The requested SmartSuite record.", {
       record: dynamicRecordSchema,
     }),
+    followUpActions: ["smartsuite.update_record"],
   }),
   defineProviderAction(service, {
     name: "create_record",
@@ -117,6 +149,7 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     outputSchema: s.object("The updated SmartSuite record.", {
       record: dynamicRecordSchema,
     }),
+    followUpActions: ["smartsuite.get_record"],
   }),
   defineProviderAction(service, {
     name: "delete_record",
