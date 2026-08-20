@@ -1394,7 +1394,7 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
       {showActions ? (
         <div className="button-row">
           {needsOAuthClient ? (
-            <Button type="button" onClick={props.onConfigureOAuthClient}>
+            <Button className="provider-configure-button" type="button" onClick={props.onConfigureOAuthClient}>
               <Settings size={16} />
               {t("providers.buttons.configureOAuthClient")}
             </Button>

@@ -126,6 +126,18 @@
   gap: 4px;
 }
 
+.providers-page .badge,
+.providers-page .tag {
+  font-size: 11.5px;
+}
+
+.provider-configure-button {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
 .provider-card-action {
   display: inline-flex;
   align-items: center;
