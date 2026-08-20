@@ -52,9 +52,9 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--cc-border);
-  border-radius: 12px;
-  background: var(--cc-card);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .overview-capability-cell {
