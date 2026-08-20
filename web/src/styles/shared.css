@@ -278,6 +278,14 @@
   margin-bottom: 12px;
 }
 
+.cc-section-title {
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 .chip:hover {
   background: var(--accent);
 }

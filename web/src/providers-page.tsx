@@ -263,7 +263,7 @@ function ProviderBrowser(props: ProviderBrowserProps): ReactNode {
     <section className="provider-browser-panel">
       <div className="provider-browser-header">
         <div>
-          <h2>{t("providers.catalogTitle")}</h2>
+          <h2 className="cc-section-title">{t("providers.catalogTitle")}</h2>
         </div>
         <label className="relative flex w-full max-w-80 items-center sm:w-80">
           <Search className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
@@ -719,7 +719,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         </div>
         <div className="provider-detail-actions">
           {props.provider.homepageUrl ? (
-            <Button asChild variant="outline" size="sm">
+            <Button className="cc-button" asChild variant="outline" size="sm">
               <a href={props.provider.homepageUrl} target="_blank" rel="noreferrer">
                 {t("providers.providerHomepage")}
                 <ArrowUpRight size={14} />
@@ -733,7 +733,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         <section className="detail-panel provider-detail-card provider-connection-card">
           <div className="provider-panel-title-row">
             <div>
-              <h3>{t("providers.connection")}</h3>
+              <h3 className="cc-section-title">{t("providers.connection")}</h3>
               <p>{connectionDescription}</p>
             </div>
           </div>
@@ -810,7 +810,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         <section className="detail-panel provider-detail-card">
           <div className="provider-panel-title-row">
             <div>
-              <h3>{t("providers.scopes")}</h3>
+              <h3 className="cc-section-title">{t("providers.scopes")}</h3>
               <p>{t("providers.scopesDescription")}</p>
             </div>
           </div>
@@ -823,7 +823,7 @@ function ProviderDetail(props: ProviderDetailProps): ReactNode {
         <section className="detail-panel provider-detail-card">
           <div className="provider-panel-title-row">
             <div>
-              <h3>{t("providers.actions")}</h3>
+              <h3 className="cc-section-title">{t("providers.actions")}</h3>
               <p>{t("providers.actionsDescription", { count: props.provider.actions.length })}</p>
             </div>
           </div>
@@ -1400,7 +1400,7 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
             </Button>
           ) : (
             <>
-              <Button type="submit" disabled={!canSubmit}>
+              <Button className="cc-button" type="submit" disabled={!canSubmit}>
                 {props.auth.type === "oauth2" ? <ExternalLink size={16} /> : <Check size={16} />}
                 {submitLabel}
               </Button>

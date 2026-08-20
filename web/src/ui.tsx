@@ -347,11 +347,11 @@ function AppShell(props: {
             </div>
           </div>
           <div className="runtime-actions">
-            <Button className="runtime-action" variant="outline" size="sm" onClick={props.onRefresh}>
+            <Button className="cc-button runtime-action" variant="outline" size="sm" onClick={props.onRefresh}>
               {props.loading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
               <span>{t("common.refresh")}</span>
             </Button>
-            <Button className="runtime-action" variant="outline" size="sm" onClick={props.onLogout}>
+            <Button className="cc-button runtime-action" variant="outline" size="sm" onClick={props.onLogout}>
               <LogOut size={15} />
               <span>{t("shell.logout")}</span>
             </Button>

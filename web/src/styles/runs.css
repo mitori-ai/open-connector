@@ -6,6 +6,11 @@
   gap: 12px;
 }
 
+.runs-main > .runs-page.runs-page-empty {
+  grid-template-rows: auto auto auto;
+  align-content: start;
+}
+
 .runs-toolbar {
   display: grid;
   grid-template-columns: minmax(260px, 1.4fr) repeat(3, minmax(180px, 1fr));
@@ -14,18 +19,34 @@
 
 .run-action-filter {
   display: flex;
+  align-items: center;
   gap: 6px;
   width: 100%;
   min-width: 0;
+  overflow: visible;
 }
 
 .run-action-filter input {
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
 }
 
 .run-action-filter > [data-slot="button"] {
+  flex: 0 0 36px;
   width: 36px;
   height: 36px;
+}
+
+.runs-empty-panel {
+  align-self: start;
+}
+
+.runs-empty-panel .empty-state {
+  min-height: 132px;
 }
 
 .select-filter.run-select-filter {

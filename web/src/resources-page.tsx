@@ -65,7 +65,7 @@ export function ResourcesPage(): ReactNode {
               </div>
             </div>
 
-            <Button variant="outline" size="sm" asChild>
+            <Button className="cc-button" variant="outline" size="sm" asChild>
               <Link to="/access">
                 <KeyRound />
                 {t("resources.mcp.createToken")}

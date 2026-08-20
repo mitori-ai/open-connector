@@ -38,7 +38,7 @@ export function OAuthAppsPage(props: OAuthAppsPageProps): ReactNode {
       <section className="oauth-apps-panel">
         <header className="oauth-apps-header">
           <div>
-            <h2>{t("oauthApps.title")}</h2>
+            <h2 className="cc-section-title">{t("oauthApps.title")}</h2>
             <p>{t("oauthApps.description")}</p>
           </div>
           <label className="oauth-apps-search">
@@ -76,7 +76,13 @@ export function OAuthAppsPage(props: OAuthAppsPageProps): ReactNode {
                     </Badge>
                     {item.config?.clientId ? <code>{item.config.clientId}</code> : null}
                   </div>
-                  <Button variant="outline" size="sm" type="button" onClick={() => setSelected(item)}>
+                  <Button
+                    className="cc-button"
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    onClick={() => setSelected(item)}
+                  >
                     <Settings size={15} />
                     {t(configured ? "oauthApps.edit" : "oauthApps.configure")}
                   </Button>

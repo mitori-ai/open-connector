@@ -270,7 +270,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
         >
           <summary className="access-section-heading">
             <div>
-              <h2>{t("access.policy.title")}</h2>
+              <h2 className="cc-section-title">{t("access.policy.title")}</h2>
               <p>{t("access.policy.description")}</p>
             </div>
             <ChevronDown size={17} />
@@ -289,11 +289,11 @@ export function AccessPage(props: AccessPageProps): ReactNode {
 
         <div className="access-section-heading">
           <div>
-            <h2>{t("access.title")}</h2>
+            <h2 className="cc-section-title">{t("access.title")}</h2>
             <p>{t("access.description")}</p>
           </div>
 
-          <Button variant="outline" size="sm" type="button" onClick={openCreate}>
+          <Button className="cc-button" variant="outline" size="sm" type="button" onClick={openCreate}>
             <KeyRound size={16} />
             {t("access.createToken")}
           </Button>
@@ -334,7 +334,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
                     <TableCell>{formatDate(token.createdAt)}</TableCell>
                     <TableCell>{token.lastUsedAt ? formatDate(token.lastUsedAt) : ""}</TableCell>
                     <TableCell className="table-actions">
-                      <Button variant="outline" size="sm" onClick={() => openPolicyEditor(token)}>
+                      <Button className="cc-button" variant="outline" size="sm" onClick={() => openPolicyEditor(token)}>
                         <Pencil size={15} />
                         {t("access.policy.edit")}
                       </Button>
@@ -561,7 +561,7 @@ function PolicyTester(props: {
           placeholder={t(`access.policy.tester.${resource}Placeholder`)}
           onChange={setInput}
         />
-        <Button type="submit" disabled={!input.trim()}>
+        <Button className="cc-button" type="submit" disabled={!input.trim()}>
           <Play size={15} />
           {t("access.policy.tester.test")}
         </Button>
@@ -628,7 +628,7 @@ function RuntimePolicySummary(props: { policy: RuntimePolicyState; onEdit(): voi
             : ""}
         </span>
       </div>
-      <Button variant="outline" size="sm" onClick={props.onEdit}>
+      <Button className="cc-button" variant="outline" size="sm" onClick={props.onEdit}>
         <Pencil size={15} />
         {t("access.policy.runtimeSummary.edit")}
       </Button>
@@ -803,7 +803,7 @@ function CreateTokenDialog(props: CreateTokenDialogProps): ReactNode {
                 onChange={props.onDraftChange}
               />
               <div className="button-row">
-                <Button type="submit" disabled={!props.name.trim() || issues.length > 0}>
+                <Button className="cc-button" type="submit" disabled={!props.name.trim() || issues.length > 0}>
                   <KeyRound size={16} />
                   {t("access.createToken")}
                 </Button>

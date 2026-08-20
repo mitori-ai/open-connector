@@ -128,7 +128,7 @@ export function RunsPage(props: RunsPageProps): ReactNode {
 
   return (
     <TooltipProvider>
-      <div className="page-stack runs-page">
+      <div className={`page-stack runs-page ${runs.length === 0 ? "runs-page-empty" : ""}`}>
         <PageHead
           title={t("shell.headings.runs.title")}
           description={t("shell.headings.runs.subtitle")}
@@ -182,7 +182,7 @@ export function RunsPage(props: RunsPageProps): ReactNode {
           </RunSelect>
         </section>
 
-        <section className="table-panel">
+        <section className={`table-panel ${runs.length === 0 ? "runs-empty-panel" : ""}`}>
           {runs.length === 0 ? (
             <EmptyState title={t("runs.noRunsTitle")} description={t("runs.noRunsDescription")} icon={null} />
           ) : (

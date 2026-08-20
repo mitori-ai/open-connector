@@ -99,7 +99,7 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
       <section className="content-grid">
         <Card className="detail-panel overview-capability-panel">
           <div className="section-heading-row">
-            <h2>{t("overview.capabilityStatus")}</h2>
+            <h2 className="cc-section-title">{t("overview.capabilityStatus")}</h2>
           </div>
           <div className="overview-capability-grid">
             {capabilityCells.map((cell) => (
@@ -122,8 +122,8 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
       <section className="content-grid overview-activity-grid">
         <Card className="list-panel overview-call-trend-panel">
           <div className="table-panel-heading">
-            <h2>{t("overview.callTrend")}</h2>
-            <Button asChild variant="outline" size="sm">
+            <h2 className="cc-section-title">{t("overview.callTrend")}</h2>
+            <Button className="cc-button" asChild variant="outline" size="sm">
               <Link to="/runs">
                 {t("overview.viewRuns")}
                 <ArrowUpRight size={15} />
@@ -192,8 +192,8 @@ export function OverviewPage(props: OverviewPageProps): ReactNode {
 
         <Card className="list-panel overview-recent-calls-panel">
           <div className="table-panel-heading">
-            <h2>{t("overview.recentCalls")}</h2>
-            <Button asChild variant="outline" size="sm">
+            <h2 className="cc-section-title">{t("overview.recentCalls")}</h2>
+            <Button className="cc-button" asChild variant="outline" size="sm">
               <Link to="/runs">
                 {t("overview.viewRuns")}
                 <ArrowUpRight size={15} />

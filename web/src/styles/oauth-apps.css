@@ -25,8 +25,7 @@
   margin: 0;
 }
 
-.oauth-apps-header h2 {
-  font-size: 14px;
+.oauth-apps-header .cc-section-title {
   line-height: 1.35;
 }
 
@@ -95,6 +94,36 @@
 
 .oauth-app-status code {
   font-family: var(--font-mono);
+}
+
+.oauth-app-form .field {
+  gap: 6px;
+}
+
+.oauth-app-form .field > span {
+  color: var(--cc-text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.oauth-app-form .field > [data-slot="input"],
+.oauth-app-form .field > [data-slot="textarea"] {
+  color: var(--cc-text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+}
+
+.oauth-app-form .field > [data-slot="input"].font-mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.oauth-app-form .field small {
+  color: var(--cc-muted);
+  font-size: 11.5px;
+  font-weight: 400;
 }
 
 @media (max-width: 720px) {

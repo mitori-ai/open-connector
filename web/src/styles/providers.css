@@ -17,8 +17,7 @@
   border-bottom: 1px solid var(--border);
 }
 
-.provider-browser-header h2 {
-  font-size: 14px;
+.provider-browser-header .cc-section-title {
   line-height: 1.35;
 }
 
@@ -356,6 +355,10 @@
   color: var(--muted-foreground);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.provider-panel-title-row .cc-section-title {
+  line-height: 1.35;
 }
 
 .provider-connection-card > .auth-method-control,

@@ -150,13 +150,16 @@
 }
 
 .panel-section {
-  padding-top: 18px;
-  margin-top: 18px;
-  border-top: 1px solid var(--border);
+  padding-top: 0;
+  margin-top: 0;
 }
 
 .panel-section h3 {
   margin-bottom: 12px;
+}
+
+.parameter-card summary > .cc-section-title {
+  line-height: 1.2;
 }
 
 .parameter-card summary {
