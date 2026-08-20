@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ProviderRequestError } from "../provider-runtime.ts";
 import { smartsuiteActions } from "./actions.ts";
 import { executeSmartsuiteAction } from "./runtime.ts";
 
@@ -52,6 +53,29 @@ describe("SmartSuite compatibility runtime", () => {
     const transportError = await captureError(() => executeGetRecord(transportFetcher));
     expect(transportError.message).not.toContain(apiKey);
     expect(transportError.message).not.toContain(workspaceId);
+  });
+
+  it("redacts secrets from transport ProviderRequestError messages and details", async () => {
+    const fetcher = vi.fn(async () => {
+      throw new ProviderRequestError(429, `echoed ${apiKey} and ${workspaceId}`, {
+        apiKey,
+        nested: { workspaceId, retryAfter: 60 },
+        messages: [`retry ${apiKey}`, workspaceId],
+      });
+    }) as typeof fetch;
+
+    const error = await captureError(() => executeGetRecord(fetcher));
+    expect(error).toBeInstanceOf(ProviderRequestError);
+    const providerError = error as ProviderRequestError;
+    expect(providerError.status).toBe(429);
+    expect(providerError.message).toBe("echoed [redacted] and [redacted]");
+    expect(providerError.details).toEqual({
+      apiKey: "[redacted]",
+      nested: { workspaceId: "[redacted]", retryAfter: 60 },
+      messages: ["retry [redacted]", "[redacted]"],
+    });
+    expect(JSON.stringify(providerError.details)).not.toContain(apiKey);
+    expect(JSON.stringify(providerError.details)).not.toContain(workspaceId);
   });
 
   it("rejects oversized provider errors without echoing their body", async () => {

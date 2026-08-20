@@ -187,7 +187,14 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
     }
     return payload;
   } catch (error) {
-    if (error instanceof ProviderRequestError) throw error;
+    if (error instanceof ProviderRequestError) {
+      const secrets = [input.apiKey, input.workspaceId];
+      throw new ProviderRequestError(
+        error.status,
+        redactSecrets(error.message, secrets),
+        redactSecretValues(error.details, secrets),
+      );
+    }
     if (timeout.didTimeout() || (error instanceof DOMException && error.name === "AbortError")) {
       throw new ProviderRequestError(504, "SmartSuite request timed out");
     }
@@ -301,4 +308,12 @@ function redactSecrets(message: string, secrets: readonly string[]) {
     }
   }
   return redacted;
+}
+
+function redactSecretValues(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") return redactSecrets(value, secrets);
+  if (Array.isArray(value)) return value.map((item) => redactSecretValues(item, secrets));
+  const record = optionalRecord(value);
+  if (!record) return value;
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, redactSecretValues(item, secrets)]));
 }
