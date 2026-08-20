@@ -1,12 +1,12 @@
 import type { CatalogStore, RuntimeActionDefinition } from "../catalog-store.ts";
-import type { ConnectionService } from "../connection-service.ts";
+import type { ConnectionService, ConnectionSummary } from "../connection-service.ts";
 import type { ActionPolicySnapshot } from "../core/action-policy.ts";
 import type { ActionSearchIndexProvider, ActionSearchResult } from "../core/action-search.ts";
 import type { OAuthClientConfigInput } from "../oauth/oauth-client-config-service.ts";
 import type { IProviderLoader } from "../providers/provider-loader.ts";
 import type { LocalAuthOptions } from "./api/auth.ts";
 import type { RuntimeActionHttpResult } from "./api/runtime-api.ts";
-import type { ITransitFileService } from "./files/transit-file-store.ts";
+import type { ITransitFileService, TransitFileUpload } from "./files/transit-file-store.ts";
 import type { Logger } from "./logger.ts";
 import type { IIdempotencyStore } from "./storage/idempotency-store.ts";
 import type { IRuntimePolicyStore } from "./storage/runtime-policy-store.ts";
@@ -14,7 +14,7 @@ import type { RunLogCaller, RunLogListInput } from "./storage/runtime-store.ts";
 import type { RuntimeGrant, RuntimeTokenService } from "./storage/runtime-token-service.ts";
 import type { Context } from "hono";
 
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { createMcpHandler } from "@modelcontextprotocol/server";
 import { Scalar } from "@scalar/hono-api-reference";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
@@ -48,6 +48,7 @@ import {
   serializeRuntimeConnectedApp,
   serializeRuntimeFailure,
   serializeRuntimeProvider,
+  unknownActionFailure,
   writeRuntimeActionHttpResult,
   writeRuntimeFailure,
   writeRuntimeSuccess,
@@ -55,6 +56,7 @@ import {
 import { createTransitFileResponse, TransitFileError } from "./files/transit-file-store.ts";
 import { ProxyRunner } from "./proxy/proxy-runner.ts";
 import { decodeRunLogCursor } from "./storage/runtime-store.ts";
+import { summarizeRuntimeToken } from "./storage/runtime-token-service.ts";
 
 /**
  * Dependencies required to construct the local connector server.
@@ -69,6 +71,7 @@ export interface IConnectServerOptions {
   actions: ActionRunner;
   idempotency: IIdempotencyStore;
   transitFiles: ITransitFileService;
+  uploadTransitFile?: (request: Request) => Promise<TransitFileUpload>;
   staticRoot?: string;
   auth?: LocalAuthOptions;
   actionPolicy?: ActionPolicyService;
@@ -217,6 +220,13 @@ export class ConnectServer {
     this.options.registerStaticRoutes?.(app);
     app.onError((error, context) => {
       if (error instanceof HttpRequestError) {
+        if (context.req.path.startsWith("/v1/")) {
+          return writeRuntimeFailure(context, {
+            status: error.status,
+            errorCode: error.code,
+            message: error.message,
+          });
+        }
         return jsonError(context, error.status, error.code, error.message);
       }
       this.options.logger?.error(
@@ -253,6 +263,10 @@ export class ConnectServer {
 
   private async createTransitFile(context: Context): Promise<Response> {
     try {
+      if (this.options.uploadTransitFile) {
+        return context.json(await this.options.uploadTransitFile(context.req.raw));
+      }
+
       const form = await context.req.raw.formData();
       const file = form.get("file");
       if (!(file instanceof File)) {
@@ -432,12 +446,7 @@ export class ConnectServer {
   private getRuntimeAction(context: Context, actionId: string): Response {
     const action = this.options.catalog.actionsById.get(actionId);
     if (!action) {
-      return writeRuntimeFailure(context, {
-        status: 404,
-        errorCode: "invalid_input",
-        message: `unknown action: ${actionId}`,
-        meta: { actionId },
-      });
+      return writeRuntimeFailure(context, unknownActionFailure(actionId));
     }
 
     return writeRuntimeSuccess(context, serializeRuntimeAction(action));
@@ -446,12 +455,7 @@ export class ConnectServer {
   private async createRuntimeActionRun(context: Context, actionId: string): Promise<Response> {
     const action = this.options.catalog.actionsById.get(actionId);
     if (!action) {
-      return writeRuntimeFailure(context, {
-        status: 404,
-        errorCode: "invalid_input",
-        message: `unknown action: ${actionId}`,
-        meta: { actionId },
-      });
+      return writeRuntimeFailure(context, unknownActionFailure(actionId));
     }
 
     const body = await readJsonBody(context);
@@ -472,7 +476,7 @@ export class ConnectServer {
     if (!policy.evaluate(action).allowed) {
       return writeRuntimeActionHttpResult(
         context,
-        await this.executeRuntimeAction(actionId, input, connectionName, policy, runtimeGrant),
+        await this.executeRuntimeAction(actionId, input, connectionName, policy, runtimeGrant, context.req.raw.signal),
       );
     }
     const idempotencyKey = readIdempotencyKey(context.req.header("idempotency-key"));
@@ -488,7 +492,7 @@ export class ConnectServer {
     if (!idempotencyKey.key) {
       return writeRuntimeActionHttpResult(
         context,
-        await this.executeRuntimeAction(actionId, input, connectionName, policy, runtimeGrant),
+        await this.executeRuntimeAction(actionId, input, connectionName, policy, runtimeGrant, context.req.raw.signal),
       );
     }
 
@@ -542,7 +546,14 @@ export class ConnectServer {
       return writeRuntimeActionHttpResult(context, claim.response);
     }
 
-    const result = await this.executeRuntimeAction(actionId, input, connectionName, policy, runtimeGrant);
+    const result = await this.executeRuntimeAction(
+      actionId,
+      input,
+      connectionName,
+      policy,
+      runtimeGrant,
+      context.req.raw.signal,
+    );
     const completed = await this.options.idempotency.complete({
       keyHash,
       requestHash,
@@ -563,6 +574,7 @@ export class ConnectServer {
     connectionName: string | undefined,
     policy: ActionPolicySnapshot,
     runtimeGrant: RuntimeGrant | undefined,
+    signal: AbortSignal | undefined,
   ): Promise<RuntimeActionHttpResult> {
     try {
       const run = await this.options.actions.run({
@@ -572,14 +584,10 @@ export class ConnectServer {
         connectionName,
         policy,
         runtimeTokenId: runtimeGrant?.tokenId,
+        signal,
       });
       if (!run) {
-        return serializeRuntimeFailure({
-          status: 404,
-          errorCode: "invalid_input",
-          message: `unknown action: ${actionId}`,
-          meta: { actionId },
-        });
+        return serializeRuntimeFailure(unknownActionFailure(actionId));
       }
 
       return serializeRuntimeActionResult({
@@ -609,8 +617,8 @@ export class ConnectServer {
     } catch (error) {
       if (error instanceof HttpRequestError) {
         return writeRuntimeFailure(context, {
-          status: 400,
-          errorCode: "invalid_input",
+          status: error.status,
+          errorCode: error.code,
           message: error.message,
           meta: { service },
         });
@@ -650,17 +658,42 @@ export class ConnectServer {
   }
 
   private async listRuntimeApps(context: Context): Promise<Response> {
+    let policy: ActionPolicySnapshot;
+    try {
+      policy = await this.getPolicySnapshot(context);
+    } catch {
+      return writeRuntimeFailure(context, {
+        status: 500,
+        errorCode: "internal_error",
+        message: "Runtime policy is unavailable.",
+      });
+    }
     return writeRuntimeSuccess(
       context,
-      (await this.options.connections.listConnections()).map(serializeRuntimeConnectedApp),
+      this.filterAllowedConnections(policy, await this.options.connections.listConnections()).map(
+        serializeRuntimeConnectedApp,
+      ),
     );
   }
 
   private async listRuntimeAppsByService(context: Context, service: string): Promise<Response> {
+    let policy: ActionPolicySnapshot;
+    try {
+      policy = await this.getPolicySnapshot(context);
+    } catch {
+      return writeRuntimeFailure(context, {
+        status: 500,
+        errorCode: "internal_error",
+        message: "Runtime policy is unavailable.",
+        meta: { service },
+      });
+    }
     try {
       return writeRuntimeSuccess(
         context,
-        (await this.options.connections.listConnectionsByService(service)).map(serializeRuntimeConnectedApp),
+        this.filterAllowedConnections(policy, await this.options.connections.listConnectionsByService(service)).map(
+          serializeRuntimeConnectedApp,
+        ),
       );
     } catch (error) {
       if (error instanceof ConnectionError) {
@@ -678,30 +711,56 @@ export class ConnectServer {
 
   private async listAuthenticatedRuntimeApps(context: Context): Promise<Response> {
     const services = context.req.queries("service") ?? [];
-    return writeRuntimeSuccess(context, await this.options.connections.listAuthenticatedServices(services));
+    let policy: ActionPolicySnapshot;
+    try {
+      policy = await this.getPolicySnapshot(context);
+    } catch {
+      return writeRuntimeFailure(context, {
+        status: 500,
+        errorCode: "internal_error",
+        message: "Runtime policy is unavailable.",
+      });
+    }
+    const authenticated = new Set(
+      this.filterAllowedConnections(policy, await this.options.connections.listConnections())
+        .filter((connection) => connection.configured && connection.authType !== "no_auth")
+        .map((connection) => connection.service),
+    );
+    return writeRuntimeSuccess(
+      context,
+      services.filter((service) => authenticated.has(service)),
+    );
+  }
+
+  private filterAllowedConnections(
+    policy: ActionPolicySnapshot,
+    connections: ConnectionSummary[],
+  ): ConnectionSummary[] {
+    return connections.filter(
+      (connection) => connection.authType === "no_auth" || policy.evaluateConnection(connection.id).allowed,
+    );
   }
 
   private async handleMcp(context: Context): Promise<Response> {
-    const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    });
-    const server = createMcpServer({
-      catalog: this.options.catalog,
-      providerLoader: this.options.providerLoader,
-      connections: this.options.connections,
-      actions: this.options.actions,
-      actionPolicy: this.actionPolicy,
-      actionSearch: this.actionSearch,
-      getPolicySnapshot: () => this.getPolicySnapshot(context),
-      runtimeGrant: readRuntimeGrant(context),
-    });
-
-    await server.connect(transport);
+    const handler = createMcpHandler(
+      () =>
+        createMcpServer({
+          catalog: this.options.catalog,
+          providerLoader: this.options.providerLoader,
+          connections: this.options.connections,
+          actions: this.options.actions,
+          actionPolicy: this.actionPolicy,
+          actionSearch: this.actionSearch,
+          getPolicySnapshot: () => this.getPolicySnapshot(context),
+          runtimeGrant: readRuntimeGrant(context),
+          signal: context.req.raw.signal,
+        }),
+      { legacy: "stateless", responseMode: "json" },
+    );
     try {
-      return await transport.handleRequest(context.req.raw);
+      return await handler.fetch(context.req.raw);
     } finally {
-      await server.close();
+      await handler.close();
     }
   }
 
@@ -880,14 +939,7 @@ export class ConnectServer {
     const created = await this.options.runtimeTokens.createToken(name, readTokenPolicy(body, true));
     return context.json({
       token: created.token,
-      record: {
-        id: created.record.id,
-        name: created.record.name,
-        allowedActions: created.record.allowedActions,
-        blockedActions: created.record.blockedActions,
-        allowedProxies: created.record.allowedProxies,
-        createdAt: created.record.createdAt,
-      },
+      record: summarizeRuntimeToken(created.record),
     });
   }
 

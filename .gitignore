@@ -7,6 +7,7 @@ dist/
 coverage/
 catalog/
 src/providers/registry*.generated.ts
+src/providers/action-contracts.generated.ts
 .env
 .env.*
 !.env.example
@@ -14,3 +15,7 @@ src/providers/registry*.generated.ts
 *.log
 *.tsbuildinfo
 data/
+
+# Local Xero OAuth app credentials (never commit)
+xero-credentials.json
+xero-encryption-key.txt

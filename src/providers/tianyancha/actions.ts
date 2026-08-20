@@ -206,6 +206,36 @@ export const tianyanchaActions: ActionDefinition[] = [
     outputSchema: pagedOutput("investments", "The directly invested company records returned by Tianyancha."),
   }),
   defineProviderAction(service, {
+    name: "list_company_equity_changes",
+    description: "List a company's disclosed equity changes, including shareholders before and after each change.",
+    inputSchema: s.object(
+      { keyword: keywordSchema, pageNum: pageNumSchema, pageSize: pageSizeSchema },
+      { required: ["keyword"] },
+    ),
+    outputSchema: pagedOutput("equityChanges", "The disclosed equity change records returned by Tianyancha."),
+  }),
+  defineProviderAction(service, {
+    name: "list_company_historical_shareholders",
+    description: "List a company's historical shareholders, ownership ratios, and subscribed capital from Tianyancha.",
+    inputSchema: s.object(
+      { keyword: keywordSchema, pageNum: pageNumSchema, pageSize: pageSizeSchema },
+      { required: ["keyword"] },
+    ),
+    outputSchema: pagedOutput("historicalShareholders", "The historical shareholder records returned by Tianyancha."),
+  }),
+  defineProviderAction(service, {
+    name: "list_company_historical_investments",
+    description: "List companies previously invested in by a company using Tianyancha.",
+    inputSchema: s.object(
+      { keyword: keywordSchema, pageNum: pageNumSchema, pageSize: pageSizeSchema },
+      { required: ["keyword"] },
+    ),
+    outputSchema: pagedOutput(
+      "historicalInvestments",
+      "The historical outbound investment records returned by Tianyancha.",
+    ),
+  }),
+  defineProviderAction(service, {
     name: "list_company_branches",
     description: "List a company's branch organizations and their registration details.",
     inputSchema: s.object(

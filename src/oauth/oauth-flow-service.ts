@@ -157,6 +157,7 @@ export class OAuthFlowService {
 
       let tokenResponse = await requestAuthorizationCodeToken({
         code: input.code,
+        state: pending.state,
         clientId: config.clientId,
         clientSecret: config.clientSecret,
         redirectUri: this.clientConfigs.expectedRedirectUri(pending.service),
