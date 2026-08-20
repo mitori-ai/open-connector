@@ -779,7 +779,7 @@ function CreateTokenDialog(props: CreateTokenDialogProps): ReactNode {
               </section>
               <FormStatus message={t("access.tokenShownOnce")} />
               <div className="button-row">
-                <Button variant="outline" type="button" onClick={props.onClose}>
+                <Button className="cc-button" variant="outline" type="button" onClick={props.onClose}>
                   {t("common.close")}
                 </Button>
               </div>
@@ -807,7 +807,7 @@ function CreateTokenDialog(props: CreateTokenDialogProps): ReactNode {
                   <KeyRound size={16} />
                   {t("access.createToken")}
                 </Button>
-                <Button variant="outline" type="button" onClick={props.onClose}>
+                <Button className="cc-button" variant="outline" type="button" onClick={props.onClose}>
                   {t("common.close")}
                 </Button>
               </div>

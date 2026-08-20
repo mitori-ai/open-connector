@@ -458,12 +458,23 @@
 
 .structured-policy-editor > [data-slot="tabs"] > [data-slot="tabs-list"] {
   width: 100%;
+  justify-content: flex-start;
   border-bottom: 1px solid var(--border);
 }
 
 .structured-policy-editor > [data-slot="tabs"] > [data-slot="tabs-list"] > [data-slot="tabs-trigger"] {
   flex: 0 0 auto;
   min-width: 112px;
+  color: var(--cc-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.structured-policy-editor
+  > [data-slot="tabs"]
+  > [data-slot="tabs-list"]
+  > [data-slot="tabs-trigger"][data-state="active"] {
+  color: var(--cc-text);
 }
 
 .policy-allow-mode {
@@ -478,8 +489,11 @@
 .policy-allow-mode legend {
   grid-column: 1 / -1;
   margin-bottom: 2px;
-  font-size: 13px;
-  font-weight: 620;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .policy-allow-mode label {
@@ -516,12 +530,16 @@
 }
 
 .policy-allow-mode strong {
-  font-size: 13px;
+  color: var(--cc-text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .policy-allow-mode small {
-  color: var(--muted-foreground);
-  font-size: 12px;
+  color: var(--cc-muted);
+  font-size: 11.5px;
   line-height: 1.45;
 }
 
@@ -532,8 +550,11 @@
 
 .policy-rule-heading h4 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 660;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .policy-rule-heading p,
@@ -554,9 +575,10 @@
 }
 
 .policy-rule-add [data-slot="input"] {
-  height: 28px;
-  min-height: 28px;
+  height: 32px;
+  min-height: 32px;
   font-size: 12px;
+  font-weight: 400;
 }
 
 .policy-rule-error,
@@ -610,8 +632,11 @@
 }
 
 .policy-advanced-editor summary {
-  font-size: 13px;
-  font-weight: 620;
+  color: var(--cc-ink);
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .policy-advanced-editor > p {
@@ -750,6 +775,34 @@
 .token-dialog-form {
   display: grid;
   gap: 14px;
+}
+
+.policy-token-dialog .field {
+  gap: 6px;
+  color: var(--cc-text);
+  font-weight: 400;
+}
+
+.policy-token-dialog .field > span {
+  color: var(--cc-text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.policy-token-dialog .field > [data-slot="input"],
+.policy-token-dialog .field > [data-slot="textarea"] {
+  color: var(--cc-text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.policy-token-dialog .policy-advanced-grid > .field > [data-slot="textarea"] {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 400;
 }
 
 @media (max-width: 960px) {
