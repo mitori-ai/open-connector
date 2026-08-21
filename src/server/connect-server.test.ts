@@ -2610,6 +2610,42 @@ describe("ConnectServer", () => {
     });
   });
 
+  it("preserves non-shared runtime principal compatibility", async () => {
+    const localOpenApp = createTestServer([apiKeyProvider]).createApp();
+    await expect((await localOpenApp.request("/v1/principal")).json()).resolves.toEqual({
+      kind: "tenant",
+      tenantId: "local",
+      capability: "runtime",
+      credentialId: "local-open",
+    });
+
+    const bootstrapApp = createTestServer([apiKeyProvider], {
+      auth: { runtimeToken: "runtime-secret" },
+    }).createApp();
+    const bootstrapResponse = await bootstrapApp.request("/v1/principal", {
+      headers: { authorization: "Bearer runtime-secret" },
+    });
+    await expect(bootstrapResponse.json()).resolves.toEqual({
+      kind: "tenant",
+      tenantId: "local",
+      capability: "runtime",
+      credentialId: "bootstrap",
+    });
+
+    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const persistent = await runtimeTokens.createToken("control-center");
+    const persistentApp = createTestServer([apiKeyProvider], { runtimeTokens }).createApp();
+    const persistentResponse = await persistentApp.request("/v1/principal", {
+      headers: { authorization: `Bearer ${persistent.token}` },
+    });
+    await expect(persistentResponse.json()).resolves.toEqual({
+      kind: "tenant",
+      tenantId: "local",
+      capability: "runtime",
+      credentialId: persistent.record.id,
+    });
+  });
+
   it("drops stale action search index hits that are missing from the catalog", async () => {
     const staleAction: ActionDefinition = {
       ...echoAction,

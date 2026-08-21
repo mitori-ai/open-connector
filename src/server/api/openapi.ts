@@ -196,6 +196,19 @@ export function createOpenApiDocument(
         { required: ["ok", "runtime"], description: "Runtime health payload." },
       ),
     }),
+    "/v1/principal": {
+      get: {
+        tags: ["System"],
+        summary: "Return the bearer-authenticated runtime principal.",
+        description:
+          "Returns only authentication-derived tenant and credential identity. Tenant selectors are not accepted.",
+        responses: {
+          200: jsonResponse({ $ref: "#/components/schemas/RuntimePrincipal" }),
+          400: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),
+          401: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),
+        },
+      },
+    },
     "/api/auth/session": getOperation("System", "Read local admin auth session state.", {
       $ref: "#/components/schemas/LocalAuthSession",
     }),
@@ -375,6 +388,20 @@ export function createOpenApiDocument(
             capability: { type: "string", enum: ["tenant-admin"] },
           },
           { required: ["tenantId", "capability"] },
+        ),
+        RuntimePrincipal: jsonSchema.object(
+          {
+            kind: { type: "string", enum: ["tenant"] },
+            tenantId: jsonSchema.string({ description: "Bearer-derived immutable tenant identifier." }),
+            capability: { type: "string", enum: ["runtime"] },
+            credentialId: jsonSchema.string({
+              description: "Stable identifier of the authenticated runtime credential.",
+            }),
+          },
+          {
+            required: ["kind", "tenantId", "capability", "credentialId"],
+            description: "Authenticated runtime principal metadata without grants, bearer material, or secrets.",
+          },
         ),
         TenantRecord: jsonSchema.object(
           {

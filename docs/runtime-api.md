@@ -11,6 +11,7 @@ of the README.
 | MCP              | `POST /mcp`                           | Agent hosts that can call MCP tools.                                                     |
 | MCP metadata     | `GET /mcp/tools`                      | Preview the discovery-oriented MCP tool set.                                             |
 | HTTP runtime API | `/v1/*`                               | SDK-style clients, scripts, and direct Action execution.                                 |
+| Runtime identity | `GET /v1/principal`                   | Verify the tenant and stable credential selected by bearer authentication.               |
 | OpenAPI          | `GET /openapi.json`                   | API importers, reference generation, and strongly scoped one-Action specs.               |
 | Action guide     | `GET /api/actions/:actionId/agent.md` | Agent-readable markdown guide for one Action.                                            |
 | Web Console      | `GET /`                               | Browser workflow for browsing providers, configuring credentials, and debugging Actions. |
@@ -25,6 +26,23 @@ Authorization: Bearer <runtime-token-or-jwt>
 Persistent runtime tokens carry independent Action rules, provider proxy grants, and optional
 connection grants. Their `allowedProxies` list is empty by default, so a persistent token cannot call
 `/v1/proxy/:service` until a provider service or `*` is explicitly granted.
+
+Control-plane clients can verify a configured runtime bearer with `GET /v1/principal`. A persistent
+tenant runtime token returns only its bearer-derived identity:
+
+```json
+{
+  "kind": "tenant",
+  "tenantId": "tenant-a",
+  "capability": "runtime",
+  "credentialId": "stable-runtime-token-id"
+}
+```
+
+The endpoint does not return token grants or bearer material and does not accept tenant selectors in
+headers or query parameters. Shared runtimes reject anonymous, operator, tenant-admin, bootstrap,
+invalid, revoked, and disabled-tenant credentials. Non-shared runtimes retain their existing
+bootstrap and local-open compatibility principals.
 
 `allowedConnections` belongs only to stored tokens, not to deployment or Runtime policy. Omit the
 field on create, or send `[]`, for unrestricted connection access. Updates must send the field so a
@@ -255,6 +273,7 @@ by age.
 ## Public Runtime Endpoints
 
 - `GET /v1/health`
+- `GET /v1/principal`
 - `GET /v1/providers`
 - `GET /v1/actions`
 - `GET /v1/actions/search`

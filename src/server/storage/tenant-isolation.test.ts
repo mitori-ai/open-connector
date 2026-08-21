@@ -83,6 +83,61 @@ describe("shared runtime tenant isolation", () => {
     database.close();
   });
 
+  it("introspects only the bearer-derived persistent runtime principal", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "open-connector-shared-principal-"));
+    temporaryDirectories.push(directory);
+    const database = new SqliteRuntimeDatabase(join(directory, "runtime.sqlite"));
+    const credentials = new TenantCredentialService(database.tenantCredentialStore);
+    await credentials.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
+    const tenantAdmin = await credentials.issueAdminCredential(tenantA, "Control Center");
+    const tokens = new RuntimeTokenService(database.runtimeTokenStore);
+    const runtime = await tokens.createToken("control-center", undefined, tenantA);
+    const { app } = await createSharedTestApp(directory, database, {
+      sharedRuntime: true,
+      adminToken: "operator-secret",
+      runtimeToken: "bootstrap-secret",
+    });
+    const authorization = { authorization: `Bearer ${runtime.token}` };
+
+    const response = await app.request("/v1/principal", { headers: authorization });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      kind: "tenant",
+      tenantId: tenantA,
+      capability: "runtime",
+      credentialId: runtime.record.id,
+    });
+
+    expect((await app.request("/v1/principal")).status).toBe(401);
+    expect((await app.request("/v1/principal", { headers: { authorization: "Bearer wrong" } })).status).toBe(401);
+    expect((await app.request("/v1/principal", { headers: { authorization: "Bearer operator-secret" } })).status).toBe(
+      401,
+    );
+    expect(
+      (
+        await app.request("/v1/principal", {
+          headers: { authorization: `Bearer ${tenantAdmin.credential}` },
+        })
+      ).status,
+    ).toBe(401);
+    expect((await app.request("/v1/principal", { headers: { authorization: "Bearer bootstrap-secret" } })).status).toBe(
+      401,
+    );
+    expect((await app.request(`/v1/principal?tenantId=${tenantB}`, { headers: authorization })).status).toBe(400);
+    expect(
+      (
+        await app.request("/v1/principal", {
+          headers: { ...authorization, "x-tenant-id": tenantB },
+        })
+      ).status,
+    ).toBe(400);
+
+    await database.tenantCredentialStore.disableTenant(tenantA, new Date().toISOString());
+    expect((await app.request("/v1/principal", { headers: authorization })).status).toBe(401);
+
+    database.close();
+  });
+
   it("isolates same-alias connections, grants, OAuth, runs, idempotency, and transit files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "open-connector-tenant-"));
     temporaryDirectories.push(directory);
@@ -262,6 +317,8 @@ describe("shared runtime tenant isolation", () => {
 
 interface SharedTestAppOptions {
   sharedRuntime: boolean;
+  adminToken?: string;
+  runtimeToken?: string;
   verifyRuntimeJwt?: (token: string) => Promise<
     | {
         kind: "tenant";
@@ -292,6 +349,8 @@ async function createSharedTestApp(
     publicOrigin: "https://connector.example.test",
     secretCodec: new PlainTextSecretCodec(),
     sharedRuntime: options.sharedRuntime,
+    adminToken: options.adminToken,
+    runtimeToken: options.runtimeToken,
     verifyRuntimeJwt: options.verifyRuntimeJwt,
   });
 }

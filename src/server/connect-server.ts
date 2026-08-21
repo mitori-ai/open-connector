@@ -57,6 +57,7 @@ import {
   serializeRuntimeConnectedApp,
   serializeRuntimeFailure,
   serializeRuntimeProvider,
+  serializeRuntimePrincipal,
   unknownActionFailure,
   writeRuntimeActionHttpResult,
   writeRuntimeFailure,
@@ -145,6 +146,7 @@ export class ConnectServer {
     }
     app.use("*", createLocalAuthMiddleware(auth));
     app.get("/v1/health", (context) => writeRuntimeSuccess(context, { ok: true, runtime: "oomol-connect" }));
+    app.get("/v1/principal", (context) => this.getRuntimePrincipal(context));
     app.get("/v1/providers", (context) => this.listRuntimeProviders(context));
     app.get("/v1/actions", (context) => this.listRuntimeActions(context));
     app.get("/v1/actions/search", (context) => this.searchRuntimeActions(context));
@@ -1209,6 +1211,23 @@ export class ConnectServer {
     return context.json({ tenantId: principal.tenantId, capability: principal.capability });
   }
 
+  private getRuntimePrincipal(context: Context): Response {
+    if (hasTenantSelector(context)) {
+      return jsonError(context, 400, "invalid_input", "Tenant selectors are not accepted on this endpoint.");
+    }
+    const principal = readAuthenticatedPrincipal(context);
+    if (principal?.kind !== "tenant" || principal.capability !== "runtime") {
+      return jsonError(context, 401, "unauthorized", "A runtime bearer token is required.");
+    }
+    if (
+      this.options.auth?.sharedRuntime &&
+      (principal.runtimeTokenId === "bootstrap" || principal.runtimeTokenId === "local-open")
+    ) {
+      return jsonError(context, 401, "unauthorized", "A persistent tenant runtime credential is required.");
+    }
+    return context.json(serializeRuntimePrincipal(principal));
+  }
+
   private async listTenants(context: Context): Promise<Response> {
     return context.json(await this.requireTenantCredentials().listTenants());
   }
@@ -1299,6 +1318,18 @@ export class ConnectServer {
       throw new Error("Runtime policy is unavailable.");
     }
   }
+}
+
+function hasTenantSelector(context: Context): boolean {
+  const queryHasTenantSelector = [...new URL(context.req.url).searchParams.keys()].some(
+    (name) => name.toLowerCase().replaceAll("-", "").replaceAll("_", "") === "tenantid",
+  );
+  return (
+    queryHasTenantSelector ||
+    context.req.header("x-tenant-id") !== undefined ||
+    context.req.header("x-oo-tenant-id") !== undefined ||
+    context.req.header("x-oomol-tenant-id") !== undefined
+  );
 }
 
 function readOAuthClientConfigInput(body: Record<string, unknown>): OAuthClientConfigInput | undefined {
