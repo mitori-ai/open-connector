@@ -1,3 +1,4 @@
+import type { TenantId } from "../../core/tenant.ts";
 import type {
   IStagedTransitFileService,
   StagedTransitFile,
@@ -17,6 +18,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { extname } from "node:path";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { contentDispositionForFileName, contentTypeFromFileId, TransitFileError } from "./transit-file-store.ts";
 
 export interface S3TransitFileOptions {
@@ -28,6 +30,7 @@ export interface S3TransitFileOptions {
 }
 
 interface TransitFileMetadata {
+  tenantId: TenantId;
   name: string;
   mimeType: string;
   sizeBytes: number;
@@ -48,10 +51,11 @@ export class S3TransitFileService implements IStagedTransitFileService {
     this.maxBytes = options.maxBytes;
   }
 
-  async create(file: File): Promise<TransitFileUpload> {
+  async create(file: File, tenantId: TenantId = compatibilityTenantId): Promise<TransitFileUpload> {
     this.assertFileSize(file.size);
     const fileId = `${randomBytes(16).toString("hex")}${safeExtension(file.name)}`;
     const metadata = normalizeMetadata({
+      tenantId,
       name: file.name || fileId,
       mimeType: file.type || contentTypeFromFileId(fileId),
       sizeBytes: file.size,
@@ -60,11 +64,11 @@ export class S3TransitFileService implements IStagedTransitFileService {
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
-        Key: objectKey(fileId),
+        Key: objectKey(tenantId, fileId),
         Body: new Uint8Array(await file.arrayBuffer()),
         ContentLength: file.size,
         ContentType: metadata.mimeType,
-        Metadata: { filename: encodeFileName(metadata.name) },
+        Metadata: { filename: encodeFileName(metadata.name), tenantid: tenantId },
       }),
     );
 
@@ -77,10 +81,14 @@ export class S3TransitFileService implements IStagedTransitFileService {
     };
   }
 
-  async createFromPath(file: StagedTransitFile): Promise<TransitFileUpload> {
+  async createFromPath(
+    file: StagedTransitFile,
+    tenantId: TenantId = compatibilityTenantId,
+  ): Promise<TransitFileUpload> {
     this.assertFileSize(file.sizeBytes);
     const fileId = `${randomBytes(16).toString("hex")}${safeExtension(file.name)}`;
     const metadata = normalizeMetadata({
+      tenantId,
       name: file.name || fileId,
       mimeType: file.mimeType || contentTypeFromFileId(fileId),
       sizeBytes: file.sizeBytes,
@@ -89,11 +97,11 @@ export class S3TransitFileService implements IStagedTransitFileService {
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
-        Key: objectKey(fileId),
+        Key: objectKey(tenantId, fileId),
         Body: createReadStream(file.path),
         ContentLength: file.sizeBytes,
         ContentType: metadata.mimeType,
-        Metadata: { filename: encodeFileName(metadata.name) },
+        Metadata: { filename: encodeFileName(metadata.name), tenantid: tenantId },
       }),
     );
 
@@ -106,8 +114,8 @@ export class S3TransitFileService implements IStagedTransitFileService {
     };
   }
 
-  async read(fileId: string): Promise<TransitFileRead> {
-    const { object, metadata } = await this.readObject(fileId);
+  async read(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<TransitFileRead> {
+    const { object, metadata } = await this.readObject(tenantId, fileId);
     return {
       file: new File([Uint8Array.from(await object.Body!.transformToByteArray())], metadata.name, {
         type: metadata.mimeType,
@@ -118,8 +126,8 @@ export class S3TransitFileService implements IStagedTransitFileService {
     };
   }
 
-  async response(fileId: string): Promise<Response> {
-    const { object, metadata } = await this.readObject(fileId);
+  async response(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<Response> {
+    const { object, metadata } = await this.readObject(tenantId, fileId);
     return new Response(object.Body!.transformToWebStream(), {
       headers: {
         "content-length": String(metadata.sizeBytes),
@@ -129,29 +137,33 @@ export class S3TransitFileService implements IStagedTransitFileService {
     });
   }
 
-  async delete(fileId: string): Promise<boolean> {
+  async delete(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
     assertSafeFileId(fileId);
-    const existing = await this.objectExists(fileId);
-    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey(fileId) }));
+    const existing = await this.objectExists(tenantId, fileId);
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey(tenantId, fileId) }));
     return existing;
   }
 
   async cleanupExpired(): Promise<void> {}
 
-  private async readObject(fileId: string): Promise<{
+  private async readObject(
+    tenantId: TenantId,
+    fileId: string,
+  ): Promise<{
     object: GetObjectCommandOutput;
     metadata: TransitFileMetadata;
   }> {
     assertSafeFileId(fileId);
-    const object = await this.getObject(objectKey(fileId));
+    const object = await this.getObject(objectKey(tenantId, fileId));
     if (!object?.Body || !object.LastModified || this.isExpired(object.LastModified)) {
-      await this.delete(fileId);
+      await this.delete(fileId, tenantId);
       throw new TransitFileError(404, "file_not_found", "Transit file was not found.");
     }
 
     return {
       object,
       metadata: normalizeMetadata({
+        tenantId: object.Metadata?.tenantid as TenantId,
         name: decodeFileName(object.Metadata?.filename) ?? fileId,
         mimeType: object.ContentType || contentTypeFromFileId(fileId),
         sizeBytes: object.ContentLength ?? 0,
@@ -170,9 +182,9 @@ export class S3TransitFileService implements IStagedTransitFileService {
     }
   }
 
-  private async objectExists(fileId: string): Promise<boolean> {
+  private async objectExists(tenantId: TenantId, fileId: string): Promise<boolean> {
     try {
-      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: objectKey(fileId) }));
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: objectKey(tenantId, fileId) }));
       return true;
     } catch (error) {
       if (isNotFound(error)) {
@@ -195,6 +207,7 @@ export class S3TransitFileService implements IStagedTransitFileService {
 
 function normalizeMetadata(input: Partial<TransitFileMetadata>): TransitFileMetadata {
   return {
+    tenantId: typeof input.tenantId === "string" ? (input.tenantId as TenantId) : ("" as TenantId),
     name: typeof input.name === "string" && input.name.trim() ? input.name.trim() : "file",
     mimeType:
       typeof input.mimeType === "string" && input.mimeType.trim() ? input.mimeType.trim() : "application/octet-stream",
@@ -202,8 +215,8 @@ function normalizeMetadata(input: Partial<TransitFileMetadata>): TransitFileMeta
   };
 }
 
-function objectKey(fileId: string): string {
-  return `transit/${fileId}`;
+function objectKey(tenantId: TenantId, fileId: string): string {
+  return tenantId === compatibilityTenantId ? `transit/${fileId}` : `transit/${tenantId}/${fileId}`;
 }
 
 function assertSafeFileId(fileId: string): void {

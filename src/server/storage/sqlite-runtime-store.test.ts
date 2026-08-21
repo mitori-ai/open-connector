@@ -50,6 +50,7 @@ describe("SqliteRuntimeDatabase", () => {
       "0009_runtime_token_proxy.sql",
       "0010_connection_revision.sql",
       "0011_runtime_token_connection_scope.sql",
+      "0012_tenant_isolation.sql",
     ];
     expect(entries.filter((entry) => entry.message === "sqlite migration started")).toEqual(
       migrations.map((migration) => ({ fields: { migration }, message: "sqlite migration started" })),
@@ -452,6 +453,7 @@ describe("SqliteRuntimeDatabase", () => {
       "0009_runtime_token_proxy.sql",
       "0010_connection_revision.sql",
       "0011_runtime_token_connection_scope.sql",
+      "0012_tenant_isolation.sql",
     ]) {
       raw.exec(readFileSync(new URL(`../../../migrations/${migration}`, import.meta.url), "utf8"));
     }

@@ -1,3 +1,4 @@
+import type { TenantId } from "../../core/tenant.ts";
 import type { IStagedTransitFileService, StagedTransitFile, TransitFileUpload } from "./transit-file-store.ts";
 
 import Busboy from "busboy";
@@ -7,6 +8,7 @@ import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { TransitFileError } from "./transit-file-store.ts";
 
 export interface NodeTransitFileUploadOptions {
@@ -14,15 +16,19 @@ export interface NodeTransitFileUploadOptions {
   tempDir: string;
 }
 
-export function createNodeTransitFileUpload(
-  options: NodeTransitFileUploadOptions,
-): (request: Request) => Promise<TransitFileUpload> {
-  return async (request) => {
+export interface NodeTransitFileUpload {
+  (request: Request): Promise<TransitFileUpload>;
+  (request: Request, tenantId: TenantId): Promise<TransitFileUpload>;
+}
+
+export function createNodeTransitFileUpload(options: NodeTransitFileUploadOptions): NodeTransitFileUpload {
+  return async (request: Request, tenantId: TenantId = compatibilityTenantId) => {
     await mkdir(options.tempDir, { recursive: true });
     const path = join(options.tempDir, `${randomBytes(16).toString("hex")}.tmp`);
     try {
       return await options.transitFiles.createFromPath(
         await stageMultipartFile(request, path, options.transitFiles.maxBytes),
+        tenantId,
       );
     } finally {
       await unlink(path).catch(() => undefined);

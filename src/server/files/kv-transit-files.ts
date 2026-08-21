@@ -1,7 +1,9 @@
+import type { TenantId } from "../../core/tenant.ts";
 import type { KVNamespaceBinding } from "../cloudflare/cloudflare-bindings.ts";
 import type { ITransitFileService, TransitFileRead, TransitFileUpload } from "./transit-file-store.ts";
 
 import { extname } from "node:path";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { contentDispositionForFileName, contentTypeFromFileId, TransitFileError } from "./transit-file-store.ts";
 
 // Workers KV rejects an `expirationTtl` below 60 seconds.
@@ -19,6 +21,7 @@ export interface KVTransitFileOptions {
 }
 
 interface TransitFileMetadata {
+  tenantId: TenantId;
   name: string;
   mimeType: string;
   createdAt: string;
@@ -41,10 +44,11 @@ export class KVTransitFileService implements ITransitFileService {
     this.maxBytes = Math.min(positiveInteger(options.maxBytes, "maxBytes"), KV_MAX_VALUE_BYTES);
   }
 
-  async create(file: File): Promise<TransitFileUpload> {
+  async create(file: File, tenantId: TenantId = compatibilityTenantId): Promise<TransitFileUpload> {
     this.assertFileSize(file.size);
     const fileId = `${randomHex(16)}${safeExtension(file.name)}`;
     const metadata: TransitFileMetadata = {
+      tenantId,
       name: file.name || fileId,
       mimeType: file.type || contentTypeFromFileId(fileId),
       createdAt: new Date().toISOString(),
@@ -52,10 +56,10 @@ export class KVTransitFileService implements ITransitFileService {
     };
     const buffer = await file.arrayBuffer();
     // KV applies its native TTL when the entry is written, so no cleanup pass is needed.
-    await this.namespace.put(objectKey(fileId), buffer, {
+    await this.namespace.put(objectKey(tenantId, fileId), buffer, {
       expirationTtl: this.ttlSeconds,
     });
-    await this.namespace.put(metadataKey(fileId), JSON.stringify(metadata), {
+    await this.namespace.put(metadataKey(tenantId, fileId), JSON.stringify(metadata), {
       expirationTtl: this.ttlSeconds,
     });
     return {
@@ -67,8 +71,8 @@ export class KVTransitFileService implements ITransitFileService {
     };
   }
 
-  async read(fileId: string): Promise<TransitFileRead> {
-    const { buffer, metadata } = await this.readObject(fileId);
+  async read(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<TransitFileRead> {
+    const { buffer, metadata } = await this.readObject(tenantId, fileId);
     return {
       file: new File([buffer], metadata.name, { type: metadata.mimeType }),
       sizeBytes: metadata.sizeBytes,
@@ -77,8 +81,8 @@ export class KVTransitFileService implements ITransitFileService {
     };
   }
 
-  async response(fileId: string): Promise<Response> {
-    const { buffer, metadata } = await this.readObject(fileId);
+  async response(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<Response> {
+    const { buffer, metadata } = await this.readObject(tenantId, fileId);
     return new Response(buffer, {
       headers: {
         "content-length": String(metadata.sizeBytes),
@@ -88,24 +92,30 @@ export class KVTransitFileService implements ITransitFileService {
     });
   }
 
-  async delete(fileId: string): Promise<boolean> {
+  async delete(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
     assertSafeFileId(fileId);
-    const existing = await this.namespace.get(objectKey(fileId), "arrayBuffer");
-    await Promise.all([this.namespace.delete(objectKey(fileId)), this.namespace.delete(metadataKey(fileId))]);
+    const existing = await this.namespace.get(objectKey(tenantId, fileId), "arrayBuffer");
+    await Promise.all([
+      this.namespace.delete(objectKey(tenantId, fileId)),
+      this.namespace.delete(metadataKey(tenantId, fileId)),
+    ]);
     return existing != null;
   }
 
   // KV expires entries through its native TTL without manual cleanup.
   async cleanupExpired(): Promise<void> {}
 
-  private async readObject(fileId: string): Promise<{
+  private async readObject(
+    tenantId: TenantId,
+    fileId: string,
+  ): Promise<{
     buffer: ArrayBuffer;
     metadata: TransitFileMetadata;
   }> {
     assertSafeFileId(fileId);
     const [buffer, metadata] = await Promise.all([
-      this.namespace.get(objectKey(fileId), "arrayBuffer"),
-      this.readMetadata(fileId),
+      this.namespace.get(objectKey(tenantId, fileId), "arrayBuffer"),
+      this.readMetadata(tenantId, fileId),
     ]);
     // Workers KV is eventually consistent: a partial miss may be a not-yet-propagated
     // write rather than a genuinely absent file. Never delete on miss (native TTL handles
@@ -116,8 +126,8 @@ export class KVTransitFileService implements ITransitFileService {
     return { buffer, metadata };
   }
 
-  private async readMetadata(fileId: string): Promise<TransitFileMetadata | undefined> {
-    const raw = await this.namespace.get(metadataKey(fileId), "text");
+  private async readMetadata(tenantId: TenantId, fileId: string): Promise<TransitFileMetadata | undefined> {
+    const raw = await this.namespace.get(metadataKey(tenantId, fileId), "text");
     if (!raw) return undefined;
     try {
       return normalizeMetadata(JSON.parse(raw) as Partial<TransitFileMetadata>);
@@ -134,11 +144,11 @@ export class KVTransitFileService implements ITransitFileService {
 }
 
 // Keep these helpers aligned with r2-transit-files.ts.
-function objectKey(fileId: string): string {
-  return `transit/${fileId}`;
+function objectKey(tenantId: TenantId, fileId: string): string {
+  return tenantId === compatibilityTenantId ? `transit/${fileId}` : `transit/${tenantId}/${fileId}`;
 }
-function metadataKey(fileId: string): string {
-  return `transit/${fileId}.meta.json`;
+function metadataKey(tenantId: TenantId, fileId: string): string {
+  return tenantId === compatibilityTenantId ? `transit/${fileId}.meta.json` : `transit/${tenantId}/${fileId}.meta.json`;
 }
 function assertSafeFileId(fileId: string): void {
   if (!/^[a-f0-9]{32}(?:\.[a-z0-9]{1,16})?$/.test(fileId)) {
@@ -161,6 +171,7 @@ function randomHex(byteLength: number): string {
 }
 function normalizeMetadata(input: Partial<TransitFileMetadata>): TransitFileMetadata {
   return {
+    tenantId: typeof input.tenantId === "string" ? (input.tenantId as TenantId) : ("" as TenantId),
     name: typeof input.name === "string" && input.name.trim() ? input.name.trim() : "file",
     mimeType:
       typeof input.mimeType === "string" && input.mimeType.trim() ? input.mimeType.trim() : "application/octet-stream",

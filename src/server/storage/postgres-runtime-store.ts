@@ -1,5 +1,6 @@
 import type { IConnectionStore, StoredConnection } from "../../connection-service.ts";
 import type { TokenPolicy } from "../../core/action-policy.ts";
+import type { TenantId } from "../../core/tenant.ts";
 import type { ResolvedCredential, RuntimeLogger } from "../../core/types.ts";
 import type { IOAuthClientConfigStore, OAuthClientConfig } from "../../oauth/oauth-client-config-service.ts";
 import type { IOAuthStateStore, OAuthAuthorizationState } from "../../oauth/oauth-flow-service.ts";
@@ -14,9 +15,11 @@ import type { RuntimeDatabase } from "./runtime-database.ts";
 import type { IRuntimePolicyStore, RuntimePolicyRecord } from "./runtime-policy-store.ts";
 import type { IRunLogStore, RunLog, RunLogListInput, RunLogPage, RunLogWriteResult } from "./runtime-store.ts";
 import type { IRuntimeTokenStore, RuntimeTokenRecord } from "./runtime-token-service.ts";
+import type { ITenantCredentialStore, TenantAdminCredentialRecord, TenantRecord } from "./tenant-credential-service.ts";
 import type { PoolClient } from "pg";
 
 import { Pool } from "pg";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { parseRuntimeActionHttpResult } from "../api/runtime-api.ts";
 import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
 import { assertPostgresSchemaReady } from "./postgres-migrations.ts";
@@ -40,6 +43,7 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
   readonly runtimePolicyStore: IRuntimePolicyStore;
   readonly runLogStore: IRunLogStore;
   readonly idempotencyStore: IIdempotencyStore;
+  readonly tenantCredentialStore: ITenantCredentialStore;
 
   private readonly pool: Pool;
   private readonly secretCodec: ISecretCodec;
@@ -54,6 +58,7 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
     this.runtimePolicyStore = new PostgresRuntimePolicyStore(pool);
     this.runLogStore = new PostgresRunLogStore(pool, options.runLimit ?? DEFAULT_RUN_LIMIT);
     this.idempotencyStore = new PostgresIdempotencyStore(pool, this.secretCodec);
+    this.tenantCredentialStore = new PostgresTenantCredentialStore(pool);
   }
 
   static async open(
@@ -172,10 +177,14 @@ class PostgresConnectionStore implements IConnectionStore {
     this.secretCodec = secretCodec;
   }
 
-  async get(service: string, connectionName: string): Promise<StoredConnection | undefined> {
+  async get(
+    service: string,
+    connectionName: string,
+    tenantId: TenantId = compatibilityTenantId,
+  ): Promise<StoredConnection | undefined> {
     const result = await this.pool.query<RuntimeRow>(
-      "select id, revision, value from connections where service = $1 and connection_name = $2",
-      [service, connectionName],
+      "select id, revision, value from connections where tenant_id = $1 and service = $2 and connection_name = $3",
+      [tenantId, service, connectionName],
     );
     const row = result.rows[0];
     return row
@@ -189,12 +198,17 @@ class PostgresConnectionStore implements IConnectionStore {
       : undefined;
   }
 
-  async set(service: string, connectionName: string, credential: ResolvedCredential): Promise<StoredConnection> {
+  async set(
+    service: string,
+    connectionName: string,
+    credential: ResolvedCredential,
+    tenantId: TenantId = compatibilityTenantId,
+  ): Promise<StoredConnection> {
     const result = await this.pool.query<RuntimeRow>(
       `
-        insert into connections (id, revision, service, connection_name, value, updated_at)
-        values ($1, $2, $3, $4, $5, $6)
-        on conflict(service, connection_name) do update set
+        insert into connections (id, revision, tenant_id, service, connection_name, value, updated_at)
+        values ($1, $2, $3, $4, $5, $6, $7)
+        on conflict(tenant_id, service, connection_name) do update set
           revision = excluded.revision,
           value = excluded.value,
           updated_at = excluded.updated_at
@@ -203,6 +217,7 @@ class PostgresConnectionStore implements IConnectionStore {
       [
         crypto.randomUUID(),
         crypto.randomUUID(),
+        tenantId,
         service,
         connectionName,
         await this.secretCodec.encode(JSON.stringify(credential)),
@@ -219,18 +234,19 @@ class PostgresConnectionStore implements IConnectionStore {
     };
   }
 
-  async updateCredential(input: StoredConnection): Promise<boolean> {
+  async updateCredential(input: StoredConnection, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
     const result = await this.pool.query(
       `
         update connections
         set revision = $1, value = $2, updated_at = $3
-        where service = $4 and connection_name = $5 and id = $6 and revision = $7
+        where tenant_id = $4 and service = $5 and connection_name = $6 and id = $7 and revision = $8
         returning id
       `,
       [
         crypto.randomUUID(),
         await this.secretCodec.encode(JSON.stringify(input.credential)),
         new Date().toISOString(),
+        tenantId,
         input.service,
         input.connectionName,
         input.id,
@@ -240,16 +256,18 @@ class PostgresConnectionStore implements IConnectionStore {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async delete(service: string, connectionName: string): Promise<void> {
-    await this.pool.query("delete from connections where service = $1 and connection_name = $2", [
+  async delete(service: string, connectionName: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
+    await this.pool.query("delete from connections where tenant_id = $1 and service = $2 and connection_name = $3", [
+      tenantId,
       service,
       connectionName,
     ]);
   }
 
-  async list(): Promise<StoredConnection[]> {
+  async list(tenantId: TenantId = compatibilityTenantId): Promise<StoredConnection[]> {
     const result = await this.pool.query<RuntimeRow>(
-      "select id, revision, service, connection_name, value from connections order by service, connection_name",
+      "select id, revision, service, connection_name, value from connections where tenant_id = $1 order by service, connection_name",
+      [tenantId],
     );
     return await Promise.all(
       result.rows.map(async (row) => ({
@@ -260,6 +278,14 @@ class PostgresConnectionStore implements IConnectionStore {
         credential: parseJson<ResolvedCredential>(await this.secretCodec.decode(readString(row, "value"))),
       })),
     );
+  }
+
+  async ownsConnection(connectionId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+    const result = await this.pool.query("select 1 from connections where tenant_id = $1 and id = $2", [
+      tenantId,
+      connectionId,
+    ]);
+    return (result.rowCount ?? 0) > 0;
   }
 }
 
@@ -317,11 +343,16 @@ class PostgresOAuthStateStore implements IOAuthStateStore {
   async set(state: OAuthAuthorizationState): Promise<void> {
     await this.pool.query(
       `
-        insert into oauth_states (state, value, created_at)
-        values ($1, $2, $3)
-        on conflict(state) do update set value = excluded.value, created_at = excluded.created_at
+        insert into oauth_states (state, tenant_id, value, created_at)
+        values ($1, $2, $3, $4)
+        on conflict(state) do update set tenant_id = excluded.tenant_id, value = excluded.value, created_at = excluded.created_at
       `,
-      [state.state, await this.secretCodec.encode(JSON.stringify(state)), state.createdAt],
+      [
+        state.state,
+        state.tenantId ?? compatibilityTenantId,
+        await this.secretCodec.encode(JSON.stringify(state)),
+        state.createdAt,
+      ],
     );
   }
 
@@ -343,16 +374,22 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
     this.pool = pool;
   }
 
+  async hasActiveToken(): Promise<boolean> {
+    const result = await this.pool.query("select 1 from runtime_tokens where revoked_at is null limit 1");
+    return result.rows.length > 0;
+  }
+
   async add(record: RuntimeTokenRecord): Promise<void> {
     await this.pool.query(
       `
         insert into runtime_tokens (
-          id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+          id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
         record.id,
+        record.tenantId ?? compatibilityTenantId,
         record.name,
         record.tokenHash,
         JSON.stringify(record.allowedActions),
@@ -365,20 +402,23 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
     );
   }
 
-  async list(): Promise<RuntimeTokenRecord[]> {
-    const result = await this.pool.query<RuntimeRow>(`
-      select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+  async list(tenantId: TenantId = compatibilityTenantId): Promise<RuntimeTokenRecord[]> {
+    const result = await this.pool.query<RuntimeRow>(
+      `
+      select id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
       from runtime_tokens
-      where revoked_at is null
+      where tenant_id = $1 and revoked_at is null
       order by created_at desc, id desc
-    `);
+    `,
+      [tenantId],
+    );
     return result.rows.map(readRuntimeTokenRow);
   }
 
   async findByHash(tokenHash: string): Promise<RuntimeTokenRecord | undefined> {
     const result = await this.pool.query<RuntimeRow>(
       `
-        select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        select id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
         from runtime_tokens
         where token_hash = $1 and revoked_at is null
       `,
@@ -388,19 +428,24 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async updatePolicy(id: string, policy: TokenPolicy): Promise<RuntimeTokenRecord | undefined> {
+  async updatePolicy(
+    id: string,
+    policy: TokenPolicy,
+    tenantId: TenantId = compatibilityTenantId,
+  ): Promise<RuntimeTokenRecord | undefined> {
     const result = await this.pool.query<RuntimeRow>(
       `
         update runtime_tokens
         set allowed_actions = $1, blocked_actions = $2, allowed_proxies = $3, allowed_connections = $4
-        where id = $5 and revoked_at is null
-        returning id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        where tenant_id = $5 and id = $6 and revoked_at is null
+        returning id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
       `,
       [
         JSON.stringify(policy.allowedActions),
         JSON.stringify(policy.blockedActions),
         JSON.stringify(policy.allowedProxies),
         JSON.stringify(policy.allowedConnections ?? []),
+        tenantId,
         id,
       ],
     );
@@ -408,16 +453,104 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async revoke(id: string): Promise<boolean> {
-    const result = await this.pool.query("delete from runtime_tokens where id = $1", [id]);
+  async revoke(id: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+    const result = await this.pool.query("delete from runtime_tokens where tenant_id = $1 and id = $2", [tenantId, id]);
     return (result.rowCount ?? 0) > 0;
   }
 
-  async markUsed(id: string, usedAt: string): Promise<void> {
-    await this.pool.query("update runtime_tokens set last_used_at = $1 where id = $2 and revoked_at is null", [
-      usedAt,
-      id,
+  async markUsed(id: string, usedAt: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
+    await this.pool.query(
+      "update runtime_tokens set last_used_at = $1 where tenant_id = $2 and id = $3 and revoked_at is null",
+      [usedAt, tenantId, id],
+    );
+  }
+}
+
+class PostgresTenantCredentialStore implements ITenantCredentialStore {
+  private readonly pool: Pool;
+
+  constructor(pool: Pool) {
+    this.pool = pool;
+  }
+
+  async hasActiveCredential(): Promise<boolean> {
+    const result = await this.pool.query("select 1 from tenant_admin_credentials where revoked_at is null limit 1");
+    return result.rows.length > 0;
+  }
+
+  async createTenant(record: TenantRecord): Promise<void> {
+    await this.pool.query("insert into tenants (id, display_name, created_at, disabled_at) values ($1, $2, $3, $4)", [
+      record.id,
+      record.displayName,
+      record.createdAt,
+      record.disabledAt ?? null,
     ]);
+  }
+
+  async getTenant(tenantId: TenantId): Promise<TenantRecord | undefined> {
+    const result = await this.pool.query<RuntimeRow>(
+      "select id, display_name, created_at, disabled_at from tenants where id = $1",
+      [tenantId],
+    );
+    return result.rows[0] ? readTenantRow(result.rows[0]) : undefined;
+  }
+
+  async listTenants(): Promise<TenantRecord[]> {
+    const result = await this.pool.query<RuntimeRow>(
+      "select id, display_name, created_at, disabled_at from tenants order by created_at, id",
+    );
+    return result.rows.map(readTenantRow);
+  }
+
+  async disableTenant(tenantId: TenantId, disabledAt: string): Promise<boolean> {
+    const result = await this.pool.query("update tenants set disabled_at = $1 where id = $2", [disabledAt, tenantId]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async addCredential(record: TenantAdminCredentialRecord): Promise<void> {
+    await this.pool.query(
+      "insert into tenant_admin_credentials (id, tenant_id, name, token_hash, created_at, last_used_at, revoked_at) values ($1, $2, $3, $4, $5, $6, $7)",
+      [
+        record.id,
+        record.tenantId,
+        record.name,
+        record.tokenHash,
+        record.createdAt,
+        record.lastUsedAt ?? null,
+        record.revokedAt ?? null,
+      ],
+    );
+  }
+
+  async findCredentialByHash(tokenHash: string): Promise<TenantAdminCredentialRecord | undefined> {
+    const result = await this.pool.query<RuntimeRow>(
+      "select id, tenant_id, name, token_hash, created_at, last_used_at, revoked_at from tenant_admin_credentials where token_hash = $1 and revoked_at is null",
+      [tokenHash],
+    );
+    return result.rows[0] ? readTenantCredentialRow(result.rows[0]) : undefined;
+  }
+
+  async listCredentials(tenantId: TenantId): Promise<TenantAdminCredentialRecord[]> {
+    const result = await this.pool.query<RuntimeRow>(
+      "select id, tenant_id, name, token_hash, created_at, last_used_at, revoked_at from tenant_admin_credentials where tenant_id = $1 order by created_at desc",
+      [tenantId],
+    );
+    return result.rows.map(readTenantCredentialRow);
+  }
+
+  async revokeCredential(tenantId: TenantId, credentialId: string, revokedAt: string): Promise<boolean> {
+    const result = await this.pool.query(
+      "update tenant_admin_credentials set revoked_at = $1 where tenant_id = $2 and id = $3 and revoked_at is null",
+      [revokedAt, tenantId, credentialId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async markCredentialUsed(credentialId: string, usedAt: string): Promise<void> {
+    await this.pool.query(
+      "update tenant_admin_credentials set last_used_at = $1 where id = $2 and revoked_at is null",
+      [usedAt, credentialId],
+    );
   }
 }
 
@@ -466,21 +599,28 @@ class PostgresIdempotencyStore implements IIdempotencyStore {
       const inserted = await client.query(
         `
           insert into idempotency_records (
-            key_hash, claim_id, request_hash, state, response_value, created_at, expires_at
+            tenant_id, key_hash, claim_id, request_hash, state, response_value, created_at, expires_at
           )
-          values ($1, $2, $3, 'in_progress', null, $4, $5)
-          on conflict(key_hash) do nothing
+          values ($1, $2, $3, $4, 'in_progress', null, $5, $6)
+          on conflict(tenant_id, key_hash) do nothing
           returning key_hash
         `,
-        [input.keyHash, input.claimId, input.requestHash, input.now, input.expiresAt],
+        [
+          input.tenantId ?? compatibilityTenantId,
+          input.keyHash,
+          input.claimId,
+          input.requestHash,
+          input.now,
+          input.expiresAt,
+        ],
       );
       if ((inserted.rowCount ?? 0) > 0) {
         return { kind: "acquired" } as const;
       }
 
       const existing = await client.query<RuntimeRow>(
-        "select request_hash, state, response_value from idempotency_records where key_hash = $1",
-        [input.keyHash],
+        "select request_hash, state, response_value from idempotency_records where tenant_id = $1 and key_hash = $2",
+        [input.tenantId ?? compatibilityTenantId, input.keyHash],
       );
       return { kind: "existing", row: existing.rows[0]! } as const;
     });
@@ -508,14 +648,16 @@ class PostgresIdempotencyStore implements IIdempotencyStore {
       `
         update idempotency_records
         set state = 'completed', response_value = $1, expires_at = $2
-        where key_hash = $3
-          and claim_id = $4
-          and request_hash = $5
+        where tenant_id = $3
+          and key_hash = $4
+          and claim_id = $5
+          and request_hash = $6
           and state = 'in_progress'
       `,
       [
         await this.secretCodec.encode(JSON.stringify(input.response)),
         input.expiresAt,
+        input.tenantId ?? compatibilityTenantId,
         input.keyHash,
         input.claimId,
         input.requestHash,
@@ -534,13 +676,14 @@ class PostgresRunLogStore implements IRunLogStore {
     this.limit = limit;
   }
 
-  async add(run: RunLog): Promise<RunLogWriteResult> {
+  async add(run: RunLog, tenantId: TenantId = compatibilityTenantId): Promise<RunLogWriteResult> {
     await this.pool.query(
       `
-        insert into runs (id, service, action_id, caller, started_at, completed_at, ok, value)
-        values ($1, $2, $3, $4, $5, $6, $7, $8)
+        insert into runs (id, tenant_id, service, action_id, caller, started_at, completed_at, ok, value)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         on conflict(id) do update set
           service = excluded.service,
+          tenant_id = excluded.tenant_id,
           action_id = excluded.action_id,
           caller = excluded.caller,
           started_at = excluded.started_at,
@@ -550,6 +693,7 @@ class PostgresRunLogStore implements IRunLogStore {
       `,
       [
         run.id,
+        tenantId,
         run.service,
         run.actionId,
         run.caller,
@@ -565,12 +709,12 @@ class PostgresRunLogStore implements IRunLogStore {
         `
           delete from runs
           where id in (
-            select id from runs
+            select id from runs where tenant_id = $1
             order by started_at desc, id desc
-            offset $1
+            offset $2
           )
         `,
-        [this.limit],
+        [tenantId, this.limit],
       );
       return { retentionApplied: true };
     } catch {
@@ -578,17 +722,20 @@ class PostgresRunLogStore implements IRunLogStore {
     }
   }
 
-  async get(id: string): Promise<RunLog | undefined> {
-    const result = await this.pool.query<RuntimeRow>("select service, value from runs where id = $1", [id]);
+  async get(id: string, tenantId: TenantId = compatibilityTenantId): Promise<RunLog | undefined> {
+    const result = await this.pool.query<RuntimeRow>(
+      "select service, value from runs where tenant_id = $1 and id = $2",
+      [tenantId, id],
+    );
     const row = result.rows[0];
     return row ? readRunLogRow(row) : undefined;
   }
 
-  async list(input: RunLogListInput = {}): Promise<RunLogPage> {
+  async list(input: RunLogListInput = {}, tenantId: TenantId = compatibilityTenantId): Promise<RunLogPage> {
     const limit = Math.max(1, Math.min(input.limit ?? this.limit, this.limit));
     const cursor = decodeRunLogCursor(input.cursor);
-    const conditions: string[] = [];
-    const values: Array<string | number> = [];
+    const conditions: string[] = ["tenant_id = $1"];
+    const values: Array<string | number> = [tenantId];
     if (cursor) {
       const startedAtParameter = values.push(cursor.startedAt);
       const repeatedStartedAtParameter = values.push(cursor.startedAt);
@@ -628,6 +775,7 @@ class PostgresRunLogStore implements IRunLogStore {
 function readRuntimeTokenRow(row: RuntimeRow): RuntimeTokenRecord {
   return {
     id: readString(row, "id"),
+    tenantId: readString(row, "tenant_id") as TenantId,
     name: readString(row, "name"),
     tokenHash: readString(row, "token_hash"),
     allowedActions: parseJson(readString(row, "allowed_actions")),
@@ -636,6 +784,27 @@ function readRuntimeTokenRow(row: RuntimeRow): RuntimeTokenRecord {
     allowedConnections: parseJson(readOptionalString(row, "allowed_connections") ?? "[]"),
     createdAt: readString(row, "created_at"),
     lastUsedAt: readOptionalString(row, "last_used_at"),
+  };
+}
+
+function readTenantRow(row: RuntimeRow): TenantRecord {
+  return {
+    id: readString(row, "id") as TenantId,
+    displayName: readString(row, "display_name"),
+    createdAt: readString(row, "created_at"),
+    disabledAt: readOptionalString(row, "disabled_at"),
+  };
+}
+
+function readTenantCredentialRow(row: RuntimeRow): TenantAdminCredentialRecord {
+  return {
+    id: readString(row, "id"),
+    tenantId: readString(row, "tenant_id") as TenantId,
+    name: readString(row, "name"),
+    tokenHash: readString(row, "token_hash"),
+    createdAt: readString(row, "created_at"),
+    lastUsedAt: readOptionalString(row, "last_used_at"),
+    revokedAt: readOptionalString(row, "revoked_at"),
   };
 }
 

@@ -44,7 +44,11 @@ describe("PostgreSQL migrations with PGlite", () => {
       await expect(assertPostgresSchemaReady(pool)).resolves.toBeUndefined();
       await expect(migratePostgresDatabase({ pool })).resolves.toBeUndefined();
       await expect(pool.query("select name from runtime_migrations order by name")).resolves.toMatchObject({
-        rows: [{ name: "0010_runtime.sql" }, { name: "0011_runtime_token_connection_scope.sql" }],
+        rows: [
+          { name: "0010_runtime.sql" },
+          { name: "0011_runtime_token_connection_scope.sql" },
+          { name: "0012_tenant_isolation.sql" },
+        ],
       });
 
       await pool.query("delete from runtime_migrations where name = $1", ["0010_runtime.sql"]);

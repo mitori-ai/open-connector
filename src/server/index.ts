@@ -51,10 +51,25 @@ async function main(): Promise<void> {
   const secretCodec = createSecretCodec(process.env.OOMOL_CONNECT_ENCRYPTION_KEY);
   const adminToken = process.env.OOMOL_CONNECT_ADMIN_TOKEN;
   const runtimeToken = process.env.OOMOL_CONNECT_RUNTIME_TOKEN;
+  const sharedRuntime = parseBooleanEnv("OOMOL_CONNECT_SHARED_RUNTIME");
+  assertSharedRuntimeConfiguration({
+    sharedRuntime,
+    databaseUrl,
+    adminToken,
+    runtimeToken,
+    encryptionConfigured: secretCodec.encrypted,
+    jwtConfigured: Boolean(
+      process.env.OOMOL_CONNECT_JWKS_URI ||
+      process.env.OOMOL_CONNECT_JWT_ISSUER ||
+      process.env.OOMOL_CONNECT_JWT_AUDIENCE,
+    ),
+    jwtTenantClaim: process.env.OOMOL_CONNECT_JWT_TENANT_CLAIM,
+  });
   const verifyRuntimeJwt = createRuntimeJwtVerifier({
     jwksUri: process.env.OOMOL_CONNECT_JWKS_URI,
     issuer: process.env.OOMOL_CONNECT_JWT_ISSUER,
     audience: process.env.OOMOL_CONNECT_JWT_AUDIENCE,
+    tenantClaim: process.env.OOMOL_CONNECT_JWT_TENANT_CLAIM,
   });
   const actionPolicy = new ActionPolicyService({
     allowedActions: parseActionPolicyList(process.env.OOMOL_CONNECT_ALLOWED_ACTIONS),
@@ -144,6 +159,31 @@ async function main(): Promise<void> {
     await waitForShutdown(server);
   } finally {
     await runtimeDatabase.close();
+  }
+}
+
+interface SharedRuntimeConfiguration {
+  sharedRuntime: boolean;
+  databaseUrl?: string;
+  adminToken?: string;
+  runtimeToken?: string;
+  encryptionConfigured: boolean;
+  jwtConfigured: boolean;
+  jwtTenantClaim?: string;
+}
+
+function assertSharedRuntimeConfiguration(input: SharedRuntimeConfiguration): void {
+  if (!input.sharedRuntime) return;
+  const missing: string[] = [];
+  if (!input.databaseUrl?.match(/^postgres(?:ql)?:\/\//u)) missing.push("OOMOL_CONNECT_DATABASE_URL (PostgreSQL)");
+  if (!input.adminToken?.trim()) missing.push("OOMOL_CONNECT_ADMIN_TOKEN");
+  if (!input.encryptionConfigured) missing.push("OOMOL_CONNECT_ENCRYPTION_KEY");
+  if (input.jwtConfigured && !input.jwtTenantClaim?.trim()) missing.push("OOMOL_CONNECT_JWT_TENANT_CLAIM");
+  if (input.runtimeToken?.trim()) {
+    throw new Error("OOMOL_CONNECT_RUNTIME_TOKEN must be unset when OOMOL_CONNECT_SHARED_RUNTIME=true.");
+  }
+  if (missing.length > 0) {
+    throw new Error(`Shared runtime configuration is incomplete; required: ${missing.join(", ")}.`);
   }
 }
 

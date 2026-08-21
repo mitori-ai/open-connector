@@ -2,6 +2,7 @@ import type { CatalogStore, RuntimeActionDefinition } from "./catalog-store.ts";
 import type { ConnectionService, ConnectionSummary } from "./connection-service.ts";
 import type { ActionPolicyDecision, ActionPolicySnapshot } from "./core/action-policy.ts";
 import type { ActionSearchIndexProvider } from "./core/action-search.ts";
+import type { TenantId } from "./core/tenant.ts";
 import type { JsonSchema, ProviderDefinition } from "./core/types.ts";
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 import type { ActionRunner, ActionRunResult } from "./server/actions/action-runner.ts";
@@ -13,6 +14,7 @@ import * as z from "zod/v4";
 import { ConnectionError } from "./connection-service.ts";
 import { ActionPolicyService, emptyPolicyRules } from "./core/action-policy.ts";
 import { createActionSearchIndexProvider, searchActions as searchActionIndex } from "./core/action-search.ts";
+import { compatibilityTenantId } from "./core/tenant.ts";
 import { renderActionMarkdown } from "./server/api/action-markdown.ts";
 
 /**
@@ -27,6 +29,7 @@ export interface IMcpServerOptions {
   actionSearch?: ActionSearchIndexProvider;
   getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
   runtimeGrant?: RuntimeGrant;
+  tenantId?: TenantId;
   signal?: AbortSignal;
 }
 
@@ -199,8 +202,8 @@ async function listConnections(options: IMcpServerOptions, service: string | und
   }
   try {
     const connections = service
-      ? await options.connections.listConnectionsByService(service)
-      : await options.connections.listConnections();
+      ? await options.connections.listConnectionsByService(service, options.tenantId ?? compatibilityTenantId)
+      : await options.connections.listConnections(options.tenantId ?? compatibilityTenantId);
     return successPayload(
       connections
         .filter((connection) => connection.authType === "no_auth" || policy.evaluateConnection(connection.id).allowed)
@@ -219,7 +222,7 @@ async function listApps(options: IMcpServerOptions, query: string | undefined): 
     return errorPayload("internal_error", "Runtime policy is unavailable.");
   }
   const normalized = query?.trim().toLowerCase();
-  const connections = (await options.connections.listConnections()).filter(
+  const connections = (await options.connections.listConnections(options.tenantId ?? compatibilityTenantId)).filter(
     (connection) => connection.authType === "no_auth" || policy.evaluateConnection(connection.id).allowed,
   );
   const defaultConnections = new Map(
@@ -343,6 +346,7 @@ async function executeAction(
     }
   }
   const run = await options.actions.run({
+    tenantId: options.tenantId ?? compatibilityTenantId,
     actionId,
     input,
     caller: "mcp",
@@ -442,7 +446,11 @@ async function getSelectedConnectionSummary(
   service: string,
   connectionName: string | undefined,
 ): Promise<ConnectionSummary | undefined> {
-  const connection = await options.connections.getConnectionSummary(service, connectionName);
+  const connection = await options.connections.getConnectionSummary(
+    service,
+    connectionName,
+    options.tenantId ?? compatibilityTenantId,
+  );
   if (connectionName && connection?.virtual && !connection.default) {
     throw new ConnectionError("connection_not_found", `${service} connection not found: ${connection.connectionName}.`);
   }

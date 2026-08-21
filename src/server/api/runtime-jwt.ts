@@ -1,20 +1,31 @@
+import type { TenantRuntimePrincipal } from "../../core/tenant.ts";
+
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { parseTenantId } from "../../core/tenant.ts";
 
 export interface RuntimeJwtConfig {
   jwksUri?: string;
   issuer?: string;
   audience?: string;
+  tenantClaim?: string;
 }
 
-export type RuntimeJwtVerifier = (token: string) => Promise<boolean>;
+export type LegacyRuntimeJwtVerifier = (token: string) => Promise<boolean>;
+export type TenantRuntimeJwtVerifier = (token: string) => Promise<TenantRuntimePrincipal | undefined>;
+export type RuntimeJwtVerifier = (token: string) => Promise<boolean | TenantRuntimePrincipal | undefined>;
 
 /**
  * Creates a JWT access-token verifier when all runtime JWT settings are configured.
  */
+export function createRuntimeJwtVerifier(
+  config: RuntimeJwtConfig & { tenantClaim: string },
+): TenantRuntimeJwtVerifier | undefined;
+export function createRuntimeJwtVerifier(config: RuntimeJwtConfig): LegacyRuntimeJwtVerifier | undefined;
 export function createRuntimeJwtVerifier(config: RuntimeJwtConfig): RuntimeJwtVerifier | undefined {
   const jwksUri = config.jwksUri?.trim();
   const issuer = config.issuer?.trim();
   const audience = config.audience?.trim();
+  const tenantClaim = config.tenantClaim?.trim();
   if (!jwksUri && !issuer && !audience) {
     return undefined;
   }
@@ -43,10 +54,22 @@ export function createRuntimeJwtVerifier(config: RuntimeJwtConfig): RuntimeJwtVe
   const jwks = createRemoteJWKSet(url);
   return async (token) => {
     try {
-      await jwtVerify(token, jwks, { issuer, audience, requiredClaims: ["exp"] });
-      return true;
+      const verified = await jwtVerify(token, jwks, {
+        issuer,
+        audience,
+        requiredClaims: tenantClaim ? ["exp", tenantClaim] : ["exp"],
+      });
+      if (!tenantClaim) return true;
+      const tenantValue = verified.payload[tenantClaim];
+      if (typeof tenantValue !== "string") return undefined;
+      return {
+        kind: "tenant",
+        capability: "runtime",
+        tenantId: parseTenantId(tenantValue),
+        runtimeTokenId: `jwt:${verified.payload.jti ?? verified.payload.sub ?? "anonymous"}`,
+      };
     } catch {
-      return false;
+      return tenantClaim ? undefined : false;
     }
   };
 }

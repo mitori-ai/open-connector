@@ -5,6 +5,7 @@ import type { IIdempotencyStore } from "./idempotency-store.ts";
 import type { IRuntimePolicyStore } from "./runtime-policy-store.ts";
 import type { IRunLogStore } from "./runtime-store.ts";
 import type { IRuntimeTokenStore } from "./runtime-token-service.ts";
+import type { ITenantCredentialStore } from "./tenant-credential-service.ts";
 
 export interface RuntimeDatabase {
   connectionStore: IConnectionStore;
@@ -14,4 +15,5 @@ export interface RuntimeDatabase {
   runtimePolicyStore: IRuntimePolicyStore;
   runLogStore: IRunLogStore;
   idempotencyStore: IIdempotencyStore;
+  tenantCredentialStore: ITenantCredentialStore;
 }

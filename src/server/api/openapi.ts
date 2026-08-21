@@ -306,14 +306,28 @@ export function createOpenApiDocument(
       items: { $ref: "#/components/schemas/ConnectionSummary" },
     }),
     "/api/connections/{service}": createConnectionPath(),
+    "/api/tenant/context": getOperation("Tenant", "Return the authenticated tenant-admin context.", {
+      $ref: "#/components/schemas/TenantContext",
+    }),
+    "/api/tenant/connections": getOperation("Tenant", "List connections owned by the authenticated tenant.", {
+      type: "array",
+      items: { $ref: "#/components/schemas/ConnectionSummary" },
+    }),
+    "/api/tenant/connections/{service}": createConnectionPath(),
     "/api/oauth/configs": getOperation("OAuth", "List local OAuth client configurations.", {
       type: "array",
       items: { $ref: "#/components/schemas/OAuthClientConfigSummary" },
     }),
     "/api/oauth/configs/{service}": createOAuthConfigPath(),
     "/api/oauth/authorizations": createOAuthAuthorizationPath(),
+    "/api/tenant/oauth/authorizations": createOAuthAuthorizationPath(),
     "/api/runtime-tokens": createRuntimeTokensPath(),
     "/api/runtime-tokens/{id}": createRuntimeTokenPath(),
+    "/api/tenant/runtime-tokens": createRuntimeTokensPath(),
+    "/api/tenant/runtime-tokens/{id}": createRuntimeTokenPath(),
+    "/api/operator/tenants": createOperatorTenantsPath(),
+    "/api/operator/tenants/{tenantId}/admin-credentials": createTenantAdminCredentialsPath(),
+    "/api/operator/tenants/{tenantId}/admin-credentials/{credentialId}": createTenantAdminCredentialPath(),
     "/api/runtime-policy": createRuntimePolicyPath(),
     "/api/files": createTransitFilesPath(),
     "/api/files/{fileId}": createTransitFilePath(),
@@ -321,6 +335,8 @@ export function createOpenApiDocument(
     "/v1/proxy/{service}": createProxyPath(),
     "/api/runs": createRunsPath(),
     "/api/runs/{id}": createRunDetailPath(),
+    "/api/tenant/runs": createRunsPath(),
+    "/api/tenant/runs/{id}": createRunDetailPath(),
     "/mcp": createMcpPath(),
     "/mcp/tools": getOperation("MCP", "List discovery-oriented MCP tool summaries.", {
       type: "object",
@@ -343,6 +359,8 @@ export function createOpenApiDocument(
       { name: "Connections", description: "Local provider credentials and connection state." },
       { name: "OAuth", description: "Local OAuth client configuration and authorization flow." },
       { name: "Access", description: "Runtime execution policy and bearer tokens for /v1 and MCP clients." },
+      { name: "Tenant", description: "Tenant-admin management derived from an opaque tenant credential." },
+      { name: "Operator", description: "Private operator provisioning for tenants and tenant-admin credentials." },
       { name: "Files", description: "Local temporary file transit for provider actions." },
       { name: "Runs", description: "Local action execution and recent run history." },
       { name: "Proxy", description: "Provider API proxy requests through local credentials." },
@@ -351,6 +369,36 @@ export function createOpenApiDocument(
     paths,
     components: {
       schemas: {
+        TenantContext: jsonSchema.object(
+          {
+            tenantId: jsonSchema.string({ description: "Credential-derived immutable tenant identifier." }),
+            capability: { type: "string", enum: ["tenant-admin"] },
+          },
+          { required: ["tenantId", "capability"] },
+        ),
+        TenantRecord: jsonSchema.object(
+          {
+            id: jsonSchema.string({ description: "Immutable tenant identifier." }),
+            displayName: jsonSchema.string({ description: "Operator-facing tenant name." }),
+            createdAt: jsonSchema.string({ description: "Creation timestamp." }),
+            disabledAt: jsonSchema.string({ description: "Disablement timestamp, when disabled." }),
+          },
+          { required: ["id", "displayName", "createdAt"], description: "Operator-owned tenant registry record." },
+        ),
+        TenantAdminCredentialSummary: jsonSchema.object(
+          {
+            id: jsonSchema.string({ description: "Tenant-admin credential identifier." }),
+            tenantId: jsonSchema.string({ description: "Credential-owned immutable tenant identifier." }),
+            name: jsonSchema.string({ description: "Operator-facing credential label." }),
+            createdAt: jsonSchema.string({ description: "Creation timestamp." }),
+            lastUsedAt: jsonSchema.string({ description: "Last successful authentication timestamp." }),
+            revokedAt: jsonSchema.string({ description: "Revocation timestamp, when revoked." }),
+          },
+          {
+            required: ["id", "tenantId", "name", "createdAt"],
+            description: "Tenant-admin credential metadata without its token or hash.",
+          },
+        ),
         ActionDefinition: jsonSchema.unknownObject("Public action catalog definition with runtime execution status."),
         LocalAuthSession: jsonSchema.object(
           {
@@ -830,6 +878,126 @@ function createTransitFilePath(): Record<string, unknown> {
               required: ["fileId", "deleted"],
               description: "Transit file deletion response.",
             },
+          ),
+        ),
+        404: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),
+      },
+    },
+  };
+}
+
+function createOperatorTenantsPath(): Record<string, unknown> {
+  return {
+    get: {
+      tags: ["Operator"],
+      summary: "List provisioned tenants.",
+      responses: {
+        200: jsonResponse({ type: "array", items: { $ref: "#/components/schemas/TenantRecord" } }),
+      },
+    },
+    post: {
+      tags: ["Operator"],
+      summary: "Provision a tenant.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: jsonSchema.object(
+              {
+                id: jsonSchema.string({ description: "Immutable tenant identifier." }),
+                displayName: jsonSchema.string({ description: "Operator-facing tenant name." }),
+              },
+              { required: ["id", "displayName"] },
+            ),
+          },
+        },
+      },
+      responses: {
+        201: jsonResponse({ $ref: "#/components/schemas/TenantRecord" }),
+        400: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),
+      },
+    },
+  };
+}
+
+function createTenantAdminCredentialsPath(): Record<string, unknown> {
+  const tenantParameter = {
+    name: "tenantId",
+    in: "path",
+    required: true,
+    schema: jsonSchema.string({ description: "Immutable tenant identifier." }),
+  };
+  return {
+    get: {
+      tags: ["Operator"],
+      summary: "List tenant-admin credential summaries.",
+      parameters: [tenantParameter],
+      responses: {
+        200: jsonResponse({
+          type: "array",
+          items: { $ref: "#/components/schemas/TenantAdminCredentialSummary" },
+        }),
+      },
+    },
+    post: {
+      tags: ["Operator"],
+      summary: "Issue a tenant-admin credential.",
+      parameters: [tenantParameter],
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: jsonSchema.object(
+              { name: jsonSchema.string({ description: "Operator-facing credential label." }) },
+              { required: ["name"] },
+            ),
+          },
+        },
+      },
+      responses: {
+        200: jsonResponse(
+          jsonSchema.object(
+            {
+              credential: jsonSchema.string({ description: "Plaintext tenant-admin credential returned once." }),
+              record: { $ref: "#/components/schemas/TenantAdminCredentialSummary" },
+            },
+            { required: ["credential", "record"] },
+          ),
+        ),
+        400: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),
+      },
+    },
+  };
+}
+
+function createTenantAdminCredentialPath(): Record<string, unknown> {
+  return {
+    delete: {
+      tags: ["Operator"],
+      summary: "Revoke a tenant-admin credential.",
+      parameters: [
+        {
+          name: "tenantId",
+          in: "path",
+          required: true,
+          schema: jsonSchema.string({ description: "Immutable tenant identifier." }),
+        },
+        {
+          name: "credentialId",
+          in: "path",
+          required: true,
+          schema: jsonSchema.string({ description: "Tenant-admin credential identifier." }),
+        },
+      ],
+      responses: {
+        200: jsonResponse(
+          jsonSchema.object(
+            {
+              id: jsonSchema.string(),
+              tenantId: jsonSchema.string(),
+              revoked: jsonSchema.boolean(),
+            },
+            { required: ["id", "tenantId", "revoked"] },
           ),
         ),
         404: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),

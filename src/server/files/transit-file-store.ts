@@ -22,15 +22,15 @@ export interface StagedTransitFile {
 
 export interface ITransitFileService {
   readonly maxBytes: number;
-  create(file: File): Promise<TransitFileUpload>;
-  read(fileId: string): Promise<TransitFileRead>;
-  response?(fileId: string): Promise<Response>;
-  delete(fileId: string): Promise<boolean>;
+  create(file: File, tenantId?: TenantId): Promise<TransitFileUpload>;
+  read(fileId: string, tenantId?: TenantId): Promise<TransitFileRead>;
+  response?(fileId: string, tenantId?: TenantId): Promise<Response>;
+  delete(fileId: string, tenantId?: TenantId): Promise<boolean>;
   cleanupExpired(): Promise<void>;
 }
 
 export interface IStagedTransitFileService extends ITransitFileService {
-  createFromPath(file: StagedTransitFile): Promise<TransitFileUpload>;
+  createFromPath(file: StagedTransitFile, tenantId?: TenantId): Promise<TransitFileUpload>;
 }
 
 export class TransitFileError extends Error {
@@ -130,3 +130,4 @@ export function contentTypeFromFileId(fileId: string): string {
       return "application/octet-stream";
   }
 }
+import type { TenantId } from "../../core/tenant.ts";

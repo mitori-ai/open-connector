@@ -3345,7 +3345,7 @@ describe("ConnectServer", () => {
     await expect(response.json()).resolves.toMatchObject({ name: "streamed.txt", sizeBytes: 6 });
   });
 
-  it("keeps transit file downloads public when admin auth is enabled", async () => {
+  it("requires authentication for transit file downloads when admin auth is enabled", async () => {
     const rootDir = await createTempDir();
     try {
       const app = createTestServer([apiKeyProvider], {
@@ -3372,8 +3372,7 @@ describe("ConnectServer", () => {
       const uploadBody = (await upload.json()) as { fileId: string };
 
       const download = await app.request(`/api/files/${uploadBody.fileId}`);
-      expect(download.status).toBe(200);
-      await expect(download.text()).resolves.toBe("download me");
+      expect(download.status).toBe(401);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
