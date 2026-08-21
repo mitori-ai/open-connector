@@ -28,6 +28,7 @@ export interface ConnectAppOptions {
   secretCodec: ISecretCodec;
   adminToken?: string;
   runtimeToken?: string;
+  sharedRuntime?: boolean;
   allowedCustomOAuth?: string[];
   allowedOAuthReturnUrlOrigins?: string[];
   verifyRuntimeJwt?: RuntimeJwtVerifier;
@@ -77,6 +78,12 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     actionPolicy: options.actionPolicy,
     logger: options.logger,
   });
+  const hasInitialRuntimeAuth = Boolean(options.verifyRuntimeJwt) || (await hasStoredRuntimeTokens());
+  if (options.sharedRuntime && !hasInitialRuntimeAuth) {
+    throw new Error(
+      "Shared runtime authentication is not ready; configure tenant-claim JWT authentication or create an active stored runtime token before startup.",
+    );
+  }
 
   return {
     app: new ConnectServer({
@@ -103,6 +110,7 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
       auth: {
         adminToken: options.adminToken,
         runtimeToken: options.runtimeToken,
+        sharedRuntime: options.sharedRuntime,
         hasRuntimeTokens: hasStoredRuntimeTokens,
         hasTenantAdminCredentials,
         resolveRuntimeToken: (token) => runtimeTokens.resolveToken(token),
@@ -116,6 +124,6 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     runtimeAuthConfigured:
       Boolean(options.runtimeToken) ||
       Boolean(options.verifyRuntimeJwt) ||
-      (options.computeRuntimeAuthConfigured === false ? false : await hasStoredRuntimeTokens()),
+      (options.computeRuntimeAuthConfigured === false ? false : hasInitialRuntimeAuth),
   };
 }

@@ -15,6 +15,26 @@ const githubProfile = {
 };
 
 describe("D1RuntimeDatabase", () => {
+  it("enforces tenant foreign keys in the D1 migration schema", () => {
+    const d1 = new SqliteD1Database();
+
+    expect(() =>
+      d1.exec(
+        "insert into oauth_states (state, tenant_id, value, created_at) values ('state', 'missing', '{}', '2026-08-21T00:00:00.000Z')",
+      ),
+    ).toThrow(/FOREIGN KEY/u);
+    expect(() =>
+      d1.exec(
+        "insert into runtime_tokens (id, tenant_id, name, token_hash, created_at) values ('token', 'missing', 'Token', 'hash', '2026-08-21T00:00:00.000Z')",
+      ),
+    ).toThrow(/FOREIGN KEY/u);
+    expect(() =>
+      d1.exec(
+        "insert into runs (id, tenant_id, service, action_id, started_at, completed_at, ok, value) values ('run', 'missing', 'github', 'github.test', '2026-08-21T00:00:00.000Z', '2026-08-21T00:00:00.000Z', 1, '{}')",
+      ),
+    ).toThrow(/FOREIGN KEY/u);
+  });
+
   it("stores connections and OAuth client configs through the secret codec", async () => {
     const d1 = new SqliteD1Database();
     const database = new D1RuntimeDatabase(d1, {
@@ -224,7 +244,7 @@ describe("D1RuntimeDatabase", () => {
   it("defaults missing allowedConnections to an unrestricted empty list", async () => {
     const d1 = new SqliteD1Database();
     d1.exec(
-      `insert into runtime_tokens (id, name, token_hash, created_at) values ('legacy-token', 'Legacy', 'legacy-hash', '2026-06-30T00:00:00.000Z')`,
+      `insert into runtime_tokens (id, tenant_id, name, token_hash, created_at) values ('legacy-token', 'local', 'Legacy', 'legacy-hash', '2026-06-30T00:00:00.000Z')`,
     );
     const database = new D1RuntimeDatabase(d1);
     await expect(database.runtimeTokenStore.list()).resolves.toMatchObject([
@@ -516,6 +536,7 @@ class SqliteD1Database implements D1DatabaseBinding {
   private readonly database = new DatabaseSync(":memory:");
 
   constructor() {
+    this.database.exec("pragma foreign_keys = on");
     this.database.exec(readFileSync(new URL("../../../migrations/0001_runtime.sql", import.meta.url), "utf8"));
     this.database.exec(readFileSync(new URL("../../../migrations/0002_run_service.sql", import.meta.url), "utf8"));
     this.database.exec(

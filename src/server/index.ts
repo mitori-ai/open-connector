@@ -119,6 +119,7 @@ async function main(): Promise<void> {
       secretCodec,
       adminToken,
       runtimeToken,
+      sharedRuntime,
       verifyRuntimeJwt,
       actionPolicy,
       allowedOAuthReturnUrlOrigins,

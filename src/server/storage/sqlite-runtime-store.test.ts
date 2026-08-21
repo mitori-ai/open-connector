@@ -6,11 +6,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseTenantId } from "../../core/tenant.ts";
 import { AesGcmSecretCodec } from "../secrets/secret-codec.ts";
 import { RuntimeTokenService } from "./runtime-token-service.ts";
 import { SqliteRunLogStore, SqliteRuntimeDatabase } from "./sqlite-runtime-store.ts";
+import { TenantCredentialService } from "./tenant-credential-service.ts";
 
 const tempDirs: string[] = [];
+const tenantA = parseTenantId("tenant-a");
+const tenantB = parseTenantId("tenant-b");
 const githubProfile = {
   accountId: "github:octocat",
   displayName: "octocat",
@@ -674,7 +678,7 @@ describe("SqliteRuntimeDatabase", () => {
     };
     const raw = new DatabaseSync(databasePath);
     raw
-      .prepare("insert into oauth_states (state, value, created_at) values (?, ?, ?)")
+      .prepare("insert into oauth_states (state, tenant_id, value, created_at) values (?, 'local', ?, ?)")
       .run(plainState.state, JSON.stringify(plainState), plainState.createdAt);
     raw.close();
     await expect(legacy.oauthStateStore.take("state-legacy")).resolves.toEqual(plainState);
@@ -823,6 +827,9 @@ describe("SqliteRuntimeDatabase", () => {
       secretCodec: new AesGcmSecretCodec("old-key"),
     });
     const tokens = new RuntimeTokenService(database.runtimeTokenStore);
+    const tenants = new TenantCredentialService(database.tenantCredentialStore);
+    await tenants.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
+    await tenants.createTenant({ id: tenantB, displayName: "Tenant B", createdAt: new Date().toISOString() });
     const token = await tokens.createToken("Claude Desktop");
     await database.connectionStore.set("github", "default", {
       authType: "api_key",
@@ -831,6 +838,8 @@ describe("SqliteRuntimeDatabase", () => {
       profile: githubProfile,
       metadata: {},
     });
+    await database.connectionStore.set("github", "shared-alias", githubCredential("tenant-a-token"), tenantA);
+    await database.connectionStore.set("github", "shared-alias", githubCredential("tenant-b-token"), tenantB);
     await database.oauthClientConfigStore.set({
       service: "gmail",
       clientId: "client-id",
@@ -865,6 +874,18 @@ describe("SqliteRuntimeDatabase", () => {
       response: successResponse({ token: "rotated-idempotency-secret" }),
       expiresAt: claim.expiresAt,
     });
+    for (const [tenantId, token] of [
+      [tenantA, "tenant-a-idempotency-secret"],
+      [tenantB, "tenant-b-idempotency-secret"],
+    ] as const) {
+      await database.idempotencyStore.claim({ ...claim, tenantId, claimId: `${tenantId}-claim` });
+      await database.idempotencyStore.complete({
+        ...claim,
+        tenantId,
+        claimId: `${tenantId}-claim`,
+        response: successResponse({ token }),
+      });
+    }
     await database.runLogStore.add(createRun("run-1", "2026-06-30T00:00:00.000Z"));
     await database.rotateSecretCodec(new AesGcmSecretCodec("new-key"));
     database.close();
@@ -885,6 +906,12 @@ describe("SqliteRuntimeDatabase", () => {
         apiKey: "github-token",
       },
     });
+    await expect(withNewKey.connectionStore.get("github", "shared-alias", tenantA)).resolves.toMatchObject({
+      credential: { apiKey: "tenant-a-token" },
+    });
+    await expect(withNewKey.connectionStore.get("github", "shared-alias", tenantB)).resolves.toMatchObject({
+      credential: { apiKey: "tenant-b-token" },
+    });
     await expect(withNewKey.oauthClientConfigStore.get("gmail")).resolves.toMatchObject({
       clientSecret: "client-secret",
     });
@@ -897,6 +924,18 @@ describe("SqliteRuntimeDatabase", () => {
       kind: "completed",
       response: successResponse({ token: "rotated-idempotency-secret" }),
     });
+    await expect(
+      withNewKey.idempotencyStore.claim({ ...claim, tenantId: tenantA, claimId: "tenant-a-replay" }),
+    ).resolves.toEqual({
+      kind: "completed",
+      response: successResponse({ token: "tenant-a-idempotency-secret" }),
+    });
+    await expect(
+      withNewKey.idempotencyStore.claim({ ...claim, tenantId: tenantB, claimId: "tenant-b-replay" }),
+    ).resolves.toEqual({
+      kind: "completed",
+      response: successResponse({ token: "tenant-b-idempotency-secret" }),
+    });
     withNewKey.close();
   });
 });
@@ -905,6 +944,16 @@ async function createDatabasePath(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "oomol-connect-"));
   tempDirs.push(dir);
   return join(dir, "connect.sqlite");
+}
+
+function githubCredential(apiKey: string) {
+  return {
+    authType: "api_key" as const,
+    apiKey,
+    values: { apiKey },
+    profile: githubProfile,
+    metadata: {},
+  };
 }
 
 function createRun(id: string, startedAt: string, actionId = "hackernews.get_top_stories", service = "hackernews") {

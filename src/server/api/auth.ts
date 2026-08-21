@@ -21,6 +21,7 @@ const authCookieMaxAgeMs = authCookieMaxAgeSeconds * 1000;
 export interface LocalAuthOptions {
   adminToken?: string;
   runtimeToken?: string;
+  sharedRuntime?: boolean;
   hasRuntimeTokens?(): Promise<boolean>;
   hasTenantAdminCredentials?(): Promise<boolean>;
   resolveRuntimeToken?(token: string): Promise<RuntimeGrant | undefined>;
@@ -56,7 +57,8 @@ export function createLocalAuthMiddleware(options: LocalAuthOptions): Middleware
     !options.hasTenantAdminCredentials &&
     !options.resolveRuntimeToken &&
     !options.tenantCredentials &&
-    !options.verifyRuntimeJwt
+    !options.verifyRuntimeJwt &&
+    !options.sharedRuntime
   ) {
     return async (_context, next) => {
       await next();
@@ -187,7 +189,8 @@ async function resolvePrincipal(
       !normalizeToken(options.runtimeToken) &&
       !hasRuntimeTokens &&
       !hasTenantAdminCredentials &&
-      !options.verifyRuntimeJwt
+      !options.verifyRuntimeJwt &&
+      !options.sharedRuntime
     ) {
       return {
         kind: "tenant",
@@ -213,7 +216,7 @@ async function resolvePrincipal(
     const hasRuntimeTokens = options.hasRuntimeTokens
       ? await options.hasRuntimeTokens()
       : options.resolveRuntimeToken !== undefined;
-    if (!hasRuntimeTokens && !options.verifyRuntimeJwt) {
+    if (!hasRuntimeTokens && !options.verifyRuntimeJwt && !options.sharedRuntime) {
       return {
         kind: "tenant",
         capability: "runtime",
@@ -331,7 +334,7 @@ async function resolveRuntimePrincipal(
     return undefined;
   }
   const grant = await options.resolveRuntimeToken?.(token);
-  if (grant) {
+  if (grant && (await isTenantActive(options, grant.tenantId ?? compatibilityTenantId))) {
     runtimeGrants.set(context.req.raw, grant);
     return {
       kind: "tenant",
@@ -342,6 +345,7 @@ async function resolveRuntimePrincipal(
   }
   const verified = await options.verifyRuntimeJwt?.(token);
   if (verified === true) {
+    if (!(await isTenantActive(options, compatibilityTenantId))) return undefined;
     return {
       kind: "tenant",
       capability: "runtime",
@@ -349,7 +353,12 @@ async function resolveRuntimePrincipal(
       runtimeTokenId: "jwt:legacy",
     };
   }
-  return verified || undefined;
+  if (!verified || !(await isTenantActive(options, verified.tenantId))) return undefined;
+  return verified;
+}
+
+async function isTenantActive(options: LocalAuthOptions, tenantId: typeof compatibilityTenantId): Promise<boolean> {
+  return options.tenantCredentials ? await options.tenantCredentials.isTenantActive(tenantId) : true;
 }
 
 function readBearerToken(context: Context): string | undefined {

@@ -58,6 +58,7 @@ interface RotatedServiceSecret {
 }
 
 interface RotatedIdempotencySecret {
+  tenantId: TenantId;
   keyHash: string;
   value: string;
 }
@@ -135,6 +136,7 @@ export class SqliteRuntimeDatabase implements RuntimeDatabase {
 
   private initialize(logger?: RuntimeLogger): void {
     this.database.exec("pragma journal_mode = wal;");
+    this.database.exec("pragma foreign_keys = on;");
     runSqliteMigrations(this.database, logger);
   }
 }
@@ -926,10 +928,11 @@ async function readRotatedIdempotencySecrets(
   nextCodec: ISecretCodec,
 ): Promise<RotatedIdempotencySecret[]> {
   const rows = database
-    .prepare("select key_hash, response_value from idempotency_records where response_value is not null")
+    .prepare("select tenant_id, key_hash, response_value from idempotency_records where response_value is not null")
     .all();
   return await Promise.all(
     rows.map(async (row) => ({
+      tenantId: readString(row, "tenant_id") as TenantId,
       keyHash: readString(row, "key_hash"),
       value: await nextCodec.encode(await currentCodec.decode(readString(row, "response_value"))),
     })),
@@ -937,9 +940,11 @@ async function readRotatedIdempotencySecrets(
 }
 
 function writeRotatedIdempotencySecrets(database: DatabaseSync, responses: RotatedIdempotencySecret[]): void {
-  const statement = database.prepare("update idempotency_records set response_value = ? where key_hash = ?");
+  const statement = database.prepare(
+    "update idempotency_records set response_value = ? where tenant_id = ? and key_hash = ?",
+  );
   for (const response of responses) {
-    statement.run(response.value, response.keyHash);
+    statement.run(response.value, response.tenantId, response.keyHash);
   }
 }
 

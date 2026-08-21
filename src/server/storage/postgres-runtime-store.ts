@@ -98,6 +98,8 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
         delete from runtime_policy;
         delete from runs;
         delete from idempotency_records;
+        delete from tenant_admin_credentials;
+        delete from tenants where id != 'local';
       `);
     });
   }
@@ -108,20 +110,22 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
         "lock table connections, oauth_client_configs, oauth_states, idempotency_records in access exclusive mode",
       );
 
-      const connectionRows = await client.query<RuntimeRow>("select service, connection_name, value from connections");
+      const connectionRows = await client.query<RuntimeRow>(
+        "select tenant_id, service, connection_name, value from connections",
+      );
       const connections = await Promise.all(
         connectionRows.rows.map(async (row) => ({
+          tenantId: readString(row, "tenant_id"),
           service: readString(row, "service"),
           connectionName: readString(row, "connection_name"),
           value: await nextSecretCodec.encode(await this.secretCodec.decode(readString(row, "value"))),
         })),
       );
       for (const connection of connections) {
-        await client.query("update connections set value = $1 where service = $2 and connection_name = $3", [
-          connection.value,
-          connection.service,
-          connection.connectionName,
-        ]);
+        await client.query(
+          "update connections set value = $1 where tenant_id = $2 and service = $3 and connection_name = $4",
+          [connection.value, connection.tenantId, connection.service, connection.connectionName],
+        );
       }
 
       const configRows = await client.query<RuntimeRow>("select service, value from oauth_client_configs");
@@ -150,19 +154,20 @@ export class PostgresRuntimeDatabase implements RuntimeDatabase {
       }
 
       const responseRows = await client.query<RuntimeRow>(
-        "select key_hash, response_value from idempotency_records where response_value is not null",
+        "select tenant_id, key_hash, response_value from idempotency_records where response_value is not null",
       );
       const responses = await Promise.all(
         responseRows.rows.map(async (row) => ({
+          tenantId: readString(row, "tenant_id"),
           keyHash: readString(row, "key_hash"),
           value: await nextSecretCodec.encode(await this.secretCodec.decode(readString(row, "response_value"))),
         })),
       );
       for (const response of responses) {
-        await client.query("update idempotency_records set response_value = $1 where key_hash = $2", [
-          response.value,
-          response.keyHash,
-        ]);
+        await client.query(
+          "update idempotency_records set response_value = $1 where tenant_id = $2 and key_hash = $3",
+          [response.value, response.tenantId, response.keyHash],
+        );
       }
     });
   }
@@ -791,8 +796,8 @@ function readTenantRow(row: RuntimeRow): TenantRecord {
   return {
     id: readString(row, "id") as TenantId,
     displayName: readString(row, "display_name"),
-    createdAt: readString(row, "created_at"),
-    disabledAt: readOptionalString(row, "disabled_at"),
+    createdAt: readTimestamp(row, "created_at"),
+    disabledAt: readOptionalTimestamp(row, "disabled_at"),
   };
 }
 
@@ -802,9 +807,9 @@ function readTenantCredentialRow(row: RuntimeRow): TenantAdminCredentialRecord {
     tenantId: readString(row, "tenant_id") as TenantId,
     name: readString(row, "name"),
     tokenHash: readString(row, "token_hash"),
-    createdAt: readString(row, "created_at"),
-    lastUsedAt: readOptionalString(row, "last_used_at"),
-    revokedAt: readOptionalString(row, "revoked_at"),
+    createdAt: readTimestamp(row, "created_at"),
+    lastUsedAt: readOptionalTimestamp(row, "last_used_at"),
+    revokedAt: readOptionalTimestamp(row, "revoked_at"),
   };
 }
 
@@ -830,6 +835,17 @@ function readOptionalString(row: RuntimeRow, key: string): string | undefined {
     throw new Error(`Expected PostgreSQL column ${key} to be a string.`);
   }
   return value;
+}
+
+function readTimestamp(row: RuntimeRow, key: string): string {
+  const value = row[key];
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") return value;
+  throw new Error(`Expected PostgreSQL column ${key} to be a timestamp.`);
+}
+
+function readOptionalTimestamp(row: RuntimeRow, key: string): string | undefined {
+  return row[key] == null ? undefined : readTimestamp(row, key);
 }
 
 function parseJson<T>(value: string): T {

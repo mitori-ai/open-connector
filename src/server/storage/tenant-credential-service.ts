@@ -62,6 +62,11 @@ export class TenantCredentialService {
     return this.store.listTenants();
   }
 
+  async isTenantActive(tenantId: TenantId): Promise<boolean> {
+    const tenant = await this.store.getTenant(tenantId);
+    return Boolean(tenant && !tenant.disabledAt);
+  }
+
   async issueAdminCredential(tenantId: TenantId, name: string): Promise<TenantAdminCredentialCreation> {
     const tenant = await this.store.getTenant(tenantId);
     if (!tenant || tenant.disabledAt) {

@@ -1,6 +1,7 @@
 import type { ActionExecutor, ProviderDefinition } from "../../core/types.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
 import type { RuntimeActionHttpResult } from "../api/runtime-api.ts";
+import type { ConnectApp } from "../connect-app.ts";
 import type { RunLog } from "./runtime-store.ts";
 
 import { Hono } from "hono";
@@ -13,7 +14,9 @@ import { ConnectionService } from "../../connection-service.ts";
 import { parseTenantId } from "../../core/tenant.ts";
 import { ActionRunner } from "../actions/action-runner.ts";
 import { createLocalAuthMiddleware, readAuthenticatedPrincipal } from "../api/auth.ts";
+import { createConnectApp } from "../connect-app.ts";
 import { TransitFileService } from "../files/transit-files.ts";
+import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
 import { RuntimeTokenPolicyError, RuntimeTokenService } from "./runtime-token-service.ts";
 import { SqliteRuntimeDatabase } from "./sqlite-runtime-store.ts";
 import { TenantCredentialService } from "./tenant-credential-service.ts";
@@ -27,6 +30,59 @@ afterEach(async () => {
 });
 
 describe("shared runtime tenant isolation", () => {
+  it("requires viable runtime authentication before shared-mode startup", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "open-connector-shared-auth-"));
+    temporaryDirectories.push(directory);
+    const database = new SqliteRuntimeDatabase(join(directory, "runtime.sqlite"));
+
+    await expect(
+      createSharedTestApp(directory, database, {
+        sharedRuntime: true,
+      }),
+    ).rejects.toThrow("Shared runtime authentication is not ready");
+
+    database.close();
+  });
+
+  it("fails closed for empty, invalid, revoked, and disabled-tenant runtime credentials", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "open-connector-shared-auth-"));
+    temporaryDirectories.push(directory);
+    const database = new SqliteRuntimeDatabase(join(directory, "runtime.sqlite"));
+    const credentials = new TenantCredentialService(database.tenantCredentialStore);
+    await credentials.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
+    const tokens = new RuntimeTokenService(database.runtimeTokenStore);
+    const firstToken = await tokens.createToken("runtime-a", undefined, tenantA);
+    const { app } = await createSharedTestApp(directory, database, {
+      sharedRuntime: true,
+      verifyRuntimeJwt: async (token) =>
+        token === "jwt-a"
+          ? { kind: "tenant", capability: "runtime", tenantId: tenantA, runtimeTokenId: "jwt:a" }
+          : undefined,
+    });
+
+    expect((await app.request("/v1/providers")).status).toBe(401);
+    expect((await app.request("/v1/providers", { headers: { authorization: "Bearer wrong" } })).status).toBe(401);
+    expect(
+      (await app.request("/v1/providers", { headers: { authorization: `Bearer ${firstToken.token}` } })).status,
+    ).toBe(200);
+    expect((await app.request("/v1/providers", { headers: { authorization: "Bearer jwt-a" } })).status).toBe(200);
+
+    await tokens.revokeToken(firstToken.record.id, tenantA);
+    expect((await app.request("/v1/providers")).status).toBe(401);
+    expect(
+      (await app.request("/v1/providers", { headers: { authorization: `Bearer ${firstToken.token}` } })).status,
+    ).toBe(401);
+
+    const secondToken = await tokens.createToken("runtime-a-2", undefined, tenantA);
+    await database.tenantCredentialStore.disableTenant(tenantA, new Date().toISOString());
+    expect(
+      (await app.request("/v1/providers", { headers: { authorization: `Bearer ${secondToken.token}` } })).status,
+    ).toBe(401);
+    expect((await app.request("/v1/providers", { headers: { authorization: "Bearer jwt-a" } })).status).toBe(401);
+
+    database.close();
+  });
+
   it("isolates same-alias connections, grants, OAuth, runs, idempotency, and transit files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "open-connector-tenant-"));
     temporaryDirectories.push(directory);
@@ -203,6 +259,42 @@ describe("shared runtime tenant isolation", () => {
     database.close();
   });
 });
+
+interface SharedTestAppOptions {
+  sharedRuntime: boolean;
+  verifyRuntimeJwt?: (token: string) => Promise<
+    | {
+        kind: "tenant";
+        capability: "runtime";
+        tenantId: typeof tenantA;
+        runtimeTokenId: string;
+      }
+    | undefined
+  >;
+}
+
+async function createSharedTestApp(
+  directory: string,
+  database: SqliteRuntimeDatabase,
+  options: SharedTestAppOptions,
+): Promise<ConnectApp> {
+  const catalog = createCatalogStore([gmailProvider], { executableActionIds: [gmailProvider.actions[0]!.id] });
+  return await createConnectApp({
+    catalog,
+    providerLoader: new TestProviderLoader(),
+    runtimeDatabase: database,
+    transitFiles: new TransitFileService({
+      rootDir: join(directory, "transit"),
+      publicOrigin: "https://connector.example.test",
+      ttlSeconds: 60,
+      maxBytes: 1024,
+    }),
+    publicOrigin: "https://connector.example.test",
+    secretCodec: new PlainTextSecretCodec(),
+    sharedRuntime: options.sharedRuntime,
+    verifyRuntimeJwt: options.verifyRuntimeJwt,
+  });
+}
 
 const gmailProvider: ProviderDefinition = {
   service: "gmail",

@@ -71,7 +71,9 @@ For a shared customer runtime, set `OOMOL_CONNECT_SHARED_RUNTIME=true`. Startup 
 PostgreSQL, `OOMOL_CONNECT_ENCRYPTION_KEY`, and a private operator
 `OOMOL_CONNECT_ADMIN_TOKEN`; it rejects `OOMOL_CONNECT_RUNTIME_TOKEN`. Provision tenants and opaque
 tenant-admin credentials through `/api/operator/tenants` and use `/api/tenant/*` for customer
-management. Tenant identity comes only from the tenant-admin credential, a persistent runtime
+management. Startup also requires either an active persistent runtime token or configured JWT
+authentication with `OOMOL_CONNECT_JWT_TENANT_CLAIM`; revoking the last stored token keeps runtime
+routes closed. Tenant identity comes only from the tenant-admin credential, a persistent runtime
 token, or a validated JWT tenant claim. Request headers, aliases, request bodies, OAuth return URLs,
 and action input never select a tenant.
 
@@ -80,6 +82,11 @@ and action input never select a tenant.
 The Node runtime uses `OOMOL_CONNECT_DATA_DIR/connect.sqlite` by default and applies SQLite
 migrations automatically when it opens the database. Leave `OOMOL_CONNECT_DATABASE_URL` unset to
 keep this zero-configuration mode.
+
+Tenant-isolation migration `0012` rebuilds SQLite and D1 tables to add tenant keys and foreign-key
+constraints. Stop every runtime instance before applying it, do not run mixed pre- and post-`0012`
+versions, and take a database backup first. The migration is forward-only: after it is applied, do
+not roll back to a binary that expects the former global-key schema.
 
 Set a `postgres:` or `postgresql:` connection URL to use PostgreSQL 15 or newer instead:
 

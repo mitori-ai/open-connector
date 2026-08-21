@@ -2,18 +2,23 @@ import type { RuntimeActionHttpResult } from "../api/runtime-api.ts";
 
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
+import { readFileSync } from "node:fs";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { parseTenantId } from "../../core/tenant.ts";
 import { AesGcmSecretCodec } from "../secrets/secret-codec.ts";
 import { assertPostgresSchemaReady, migratePostgresDatabase } from "./postgres-migrations.ts";
 import { PostgresRuntimeDatabase } from "./postgres-runtime-store.ts";
 import { RuntimeTokenService } from "./runtime-token-service.ts";
+import { TenantCredentialService } from "./tenant-credential-service.ts";
 
 const githubProfile = {
   accountId: "github:octocat",
   displayName: "octocat",
   grantedScopes: [],
 };
+const tenantA = parseTenantId("tenant-a");
+const tenantB = parseTenantId("tenant-b");
 
 interface PGliteTestServer {
   database: PGlite;
@@ -64,6 +69,50 @@ describe("PostgreSQL migrations with PGlite", () => {
       await expect(assertPostgresSchemaReady(pool)).resolves.toBeUndefined();
     } finally {
       await pool.end();
+    }
+  });
+
+  it("upgrades seeded pre-tenant data into the compatibility tenant", async () => {
+    const legacyServer = await startPGliteTestServer();
+    const pool = new Pool({ connectionString: legacyServer.url, max: 1 });
+    try {
+      await pool.query(`
+        create table runtime_migrations (name text primary key, applied_at timestamptz not null);
+        ${readFileSync(new URL("../../../migrations/postgresql/0010_runtime.sql", import.meta.url), "utf8")}
+        ${readFileSync(
+          new URL("../../../migrations/postgresql/0011_runtime_token_connection_scope.sql", import.meta.url),
+          "utf8",
+        )}
+      `);
+      await pool.query(
+        "insert into runtime_migrations (name, applied_at) values ('0010_runtime.sql', now()), ('0011_runtime_token_connection_scope.sql', now())",
+      );
+      await pool.query(
+        "insert into connections (id, revision, service, connection_name, value, updated_at) values ('connection', 'revision', 'github', 'default', '{}', now())",
+      );
+      await pool.query("insert into oauth_states (state, value, created_at) values ('state', '{}', now())");
+      await pool.query(
+        "insert into runtime_tokens (id, name, token_hash, created_at) values ('token', 'Legacy', 'hash', now())",
+      );
+      await pool.query(
+        "insert into runs (id, service, action_id, caller, started_at, completed_at, ok, value) values ('run', 'github', 'github.test', 'http', now(), now(), 1, '{}')",
+      );
+      await pool.query(
+        "insert into idempotency_records (key_hash, claim_id, request_hash, state, response_value, created_at, expires_at) values ('key', 'claim', 'request', 'in_progress', null, now(), now() + interval '1 hour')",
+      );
+
+      await migratePostgresDatabase({ pool });
+
+      for (const table of ["connections", "oauth_states", "runtime_tokens", "runs", "idempotency_records"]) {
+        await expect(pool.query(`select tenant_id from ${table}`)).resolves.toMatchObject({
+          rows: [{ tenant_id: "local" }],
+        });
+      }
+      await expect(pool.query("select id from tenants")).resolves.toMatchObject({ rows: [{ id: "local" }] });
+    } finally {
+      await pool.end();
+      await legacyServer.server.stop();
+      await legacyServer.database.close();
     }
   });
 });
@@ -275,7 +324,13 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     database = await PostgresRuntimeDatabase.open(testServer.url, {
       secretCodec: new AesGcmSecretCodec("old-key"),
     });
+    const tenants = new TenantCredentialService(database.tenantCredentialStore);
+    await tenants.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
+    await tenants.createTenant({ id: tenantB, displayName: "Tenant B", createdAt: new Date().toISOString() });
+    await tenants.issueAdminCredential(tenantA, "Tenant A admin");
     await database.connectionStore.set("github", "default", githubCredential("github-token"));
+    await database.connectionStore.set("github", "shared-alias", githubCredential("tenant-a-token"), tenantA);
+    await database.connectionStore.set("github", "shared-alias", githubCredential("tenant-b-token"), tenantB);
     await database.oauthClientConfigStore.set({
       service: "gmail",
       clientId: "client-id",
@@ -297,6 +352,18 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     };
     await database.idempotencyStore.claim(claim);
     await database.idempotencyStore.complete({ ...claim, response: successResponse({ secret: "response" }) });
+    for (const [tenantId, secret] of [
+      [tenantA, "tenant-a-response"],
+      [tenantB, "tenant-b-response"],
+    ] as const) {
+      await database.idempotencyStore.claim({ ...claim, tenantId, claimId: `${tenantId}-claim` });
+      await database.idempotencyStore.complete({
+        ...claim,
+        tenantId,
+        claimId: `${tenantId}-claim`,
+        response: successResponse({ secret }),
+      });
+    }
     await database.rotateSecretCodec(new AesGcmSecretCodec("new-key"));
     await database.close();
 
@@ -309,8 +376,15 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     database = await PostgresRuntimeDatabase.open(testServer.url, {
       secretCodec: new AesGcmSecretCodec("new-key"),
     });
+    const reopenedTenants = new TenantCredentialService(database.tenantCredentialStore);
     await expect(database.connectionStore.get("github", "default")).resolves.toMatchObject({
       credential: { apiKey: "github-token" },
+    });
+    await expect(database.connectionStore.get("github", "shared-alias", tenantA)).resolves.toMatchObject({
+      credential: { apiKey: "tenant-a-token" },
+    });
+    await expect(database.connectionStore.get("github", "shared-alias", tenantB)).resolves.toMatchObject({
+      credential: { apiKey: "tenant-b-token" },
     });
     await expect(database.oauthClientConfigStore.get("gmail")).resolves.toMatchObject({
       clientSecret: "client-secret",
@@ -322,9 +396,17 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
       kind: "completed",
       response: successResponse({ secret: "response" }),
     });
+    await expect(
+      database.idempotencyStore.claim({ ...claim, tenantId: tenantA, claimId: "tenant-a-replay" }),
+    ).resolves.toEqual({ kind: "completed", response: successResponse({ secret: "tenant-a-response" }) });
+    await expect(
+      database.idempotencyStore.claim({ ...claim, tenantId: tenantB, claimId: "tenant-b-replay" }),
+    ).resolves.toEqual({ kind: "completed", response: successResponse({ secret: "tenant-b-response" }) });
 
     await database.resetRuntimeData();
     await expect(database.connectionStore.list()).resolves.toEqual([]);
+    await expect(reopenedTenants.listTenants()).resolves.toMatchObject([{ id: "local" }]);
+    await expect(reopenedTenants.hasAdminCredentials()).resolves.toBe(false);
     const pool = new Pool({ connectionString: testServer.url, max: 1 });
     try {
       await expect(assertPostgresSchemaReady(pool)).resolves.toBeUndefined();
