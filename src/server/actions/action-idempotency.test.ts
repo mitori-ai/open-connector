@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import {
   actionInputMaxDepth,
   ActionInputDepthError,
@@ -28,54 +29,59 @@ describe("action idempotency", () => {
       actionId: "example.echo",
       connectionName: "work",
       input: { query: "hello", nested: { first: 1, second: 2, 界: 3, "!": 4 } },
+      tenantId: compatibilityTenantId,
     });
     const right = hashActionRequest({
       actionId: "example.echo",
       connectionName: "work",
       input: { nested: { "!": 4, 界: 3, second: 2, first: 1 }, query: "hello" },
+      tenantId: compatibilityTenantId,
     });
-
     expect(left).toBe(right);
-    expect(left).toBe("dbs9TrhPtVXlhZLp9sqNAryjv1DwdBfOX_QaOzR01KA");
+    expect(left).toBe("8az6bUrY5BW-LsIBYILbFhCrRnkFOA2MZpuyEQebgUQ");
     expect(left).not.toBe(
       hashActionRequest({
         actionId: "example.echo",
         connectionName: "personal",
         input: { query: "hello", nested: { first: 1, second: 2, 界: 3, "!": 4 } },
+        tenantId: compatibilityTenantId,
       }),
     );
     expect(hashIdempotencyKey("request-1")).not.toBe("request-1");
   });
-
-  it("binds stored-token requests without changing unscoped fingerprints", () => {
+  it("binds stored-token requests within a tenant fingerprint", () => {
     const request = {
+      tenantId: compatibilityTenantId,
       actionId: "example.echo",
       connectionName: "default",
       input: { message: "hello" },
     };
     const unscoped = hashActionRequest(request);
-
-    expect(hashActionRequest({ ...request, runtimeTokenId: undefined })).toBe(unscoped);
-    expect(hashActionRequest({ ...request, runtimeTokenId: "token-a" })).not.toBe(unscoped);
-    expect(hashActionRequest({ ...request, runtimeTokenId: "token-a" })).not.toBe(
-      hashActionRequest({ ...request, runtimeTokenId: "token-b" }),
+    expect(hashActionRequest({ ...request, runtimeTokenId: undefined, tenantId: compatibilityTenantId })).toBe(
+      unscoped,
+    );
+    expect(hashActionRequest({ ...request, runtimeTokenId: "token-a", tenantId: compatibilityTenantId })).not.toBe(
+      unscoped,
+    );
+    expect(hashActionRequest({ ...request, runtimeTokenId: "token-a", tenantId: compatibilityTenantId })).not.toBe(
+      hashActionRequest({ ...request, runtimeTokenId: "token-b", tenantId: compatibilityTenantId }),
     );
   });
-
   it("rejects action inputs beyond the fingerprint depth limit", () => {
     expect(() =>
       hashActionRequest({
         actionId: "example.echo",
         connectionName: "default",
         input: nestedInput(actionInputMaxDepth),
+        tenantId: compatibilityTenantId,
       }),
     ).not.toThrow();
-
     const hashTooDeepInput = () =>
       hashActionRequest({
         actionId: "example.echo",
         connectionName: "default",
         input: nestedInput(actionInputMaxDepth + 1),
+        tenantId: compatibilityTenantId,
       });
     expect(hashTooDeepInput).toThrow(ActionInputDepthError);
     expect(hashTooDeepInput).toThrow(

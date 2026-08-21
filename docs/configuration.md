@@ -82,6 +82,17 @@ response identifies the bearer-derived tenant and stable credential ID without e
 secrets. The endpoint rejects tenant selectors and request bodies, does not introspect JWT-derived
 principals, and does not allow operator or tenant-admin credentials onto the customer runtime plane.
 
+Shared-runtime OAuth uses a two-phase completion protocol because Control Center starts authorization
+server-to-server while the provider redirects the user's browser directly to OpenConnector. Control
+Center must generate an unpredictable 16-256 character `sessionCorrelation`, send it with an
+allowlisted `returnUrl` to `POST /api/tenant/oauth/authorizations`, and retain it in the initiating
+user session. The public provider callback consumes provider state once and redirects the browser to
+that return URL with a one-time encrypted `oauthCompletion` capability. Control Center then submits
+both values, using the same tenant-admin credential, to `POST /api/tenant/oauth/completions`.
+OpenConnector rejects a different tenant or session before consuming the staged completion, and a
+successful completion cannot be replayed. Neither value is a tenant selector; tenant identity always
+comes from the authenticated tenant-admin principal.
+
 ## Runtime database
 
 The Node runtime uses `OOMOL_CONNECT_DATA_DIR/connect.sqlite` by default and applies SQLite

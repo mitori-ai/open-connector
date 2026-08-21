@@ -2,11 +2,10 @@ import { mkdir, mkdtemp, readdir, rm, stat, utimes, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { cleanupStagedTransitFiles, createNodeTransitFileUpload } from "./node-transit-file-upload.ts";
 import { TransitFileService } from "./transit-files.ts";
-
 const roots: string[] = [];
-
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -15,11 +14,11 @@ describe("createNodeTransitFileUpload", () => {
   it("stages multipart input on disk before creating a local transit file", async () => {
     const { root, service, tempDir } = await createService();
     const upload = createNodeTransitFileUpload({ transitFiles: service, tempDir });
-
     const result = await upload(fileRequest("hello transit", "report.TXT", "text/plain"));
-
     expect(result).toMatchObject({ sizeBytes: 13, name: "report.TXT", mimeType: "text/plain" });
-    await expect(service.read(result.fileId).then((stored) => stored.file.text())).resolves.toBe("hello transit");
+    await expect(service.read(result.fileId, compatibilityTenantId).then((stored) => stored.file.text())).resolves.toBe(
+      "hello transit",
+    );
     await expect(readdir(tempDir)).resolves.toEqual([]);
     expect(await readdir(join(root, "files"))).toHaveLength(2);
   });
@@ -27,13 +26,12 @@ describe("createNodeTransitFileUpload", () => {
   it("preserves a Unicode file name", async () => {
     const { service, tempDir } = await createService();
     const upload = createNodeTransitFileUpload({ transitFiles: service, tempDir });
-
     const result = await upload(fileRequest("invoice", "发票.pdf", "application/pdf"));
-
     expect(result.name).toBe("发票.pdf");
-    await expect(service.read(result.fileId).then((stored) => stored.name)).resolves.toBe("发票.pdf");
+    await expect(service.read(result.fileId, compatibilityTenantId).then((stored) => stored.name)).resolves.toBe(
+      "发票.pdf",
+    );
   });
-
   it("rejects an oversized stream and removes the partial temporary file", async () => {
     const { service, tempDir } = await createService({ maxBytes: 4 });
     const upload = createNodeTransitFileUpload({ transitFiles: service, tempDir });
@@ -115,18 +113,19 @@ describe("cleanupStagedTransitFiles", () => {
     const current = join(tempDir, `${"b".repeat(32)}.tmp`);
     const unrelated = join(tempDir, "keep.txt");
     await Promise.all([writeFile(expired, "old"), writeFile(current, "new"), writeFile(unrelated, "keep")]);
-    const old = new Date(Date.now() - 120_000);
+    const old = new Date(Date.now() - 120000);
     await utimes(expired, old, old);
-
-    await cleanupStagedTransitFiles(tempDir, 60_000);
-
+    await cleanupStagedTransitFiles(tempDir, 60000);
     await expect(stat(expired)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(current)).resolves.toBeDefined();
     await expect(stat(unrelated)).resolves.toBeDefined();
   });
 });
-
-async function createService(options: { maxBytes?: number } = {}): Promise<{
+async function createService(
+  options: {
+    maxBytes?: number;
+  } = {},
+): Promise<{
   root: string;
   service: TransitFileService;
   tempDir: string;

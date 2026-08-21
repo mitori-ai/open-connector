@@ -8,7 +8,6 @@ import type { Logger } from "../logger.ts";
 
 import { ConnectionError } from "../../connection-service.ts";
 import { optionalRecord, requiredRecord, requiredString } from "../../core/cast.ts";
-import { compatibilityTenantId } from "../../core/tenant.ts";
 import { mapConnectionErrorStatus } from "../api/runtime-api.ts";
 
 export type ProxyFailureStatus = 400 | 403 | 404 | 409 | 413 | 429 | 500 | 501;
@@ -22,7 +21,7 @@ export interface ProxyRunnerOptions {
 }
 
 export interface RunProxyInput {
-  tenantId?: TenantId;
+  tenantId: TenantId;
   service: string;
   input: unknown;
   connectionName?: string;
@@ -59,7 +58,7 @@ export class ProxyRunner {
   }
 
   async run(input: RunProxyInput): Promise<ProxyRunResult> {
-    const tenantId = input.tenantId ?? compatibilityTenantId;
+    const tenantId = input.tenantId;
     const provider = this.options.catalog.providers.find((candidate) => candidate.service === input.service);
     if (!provider) {
       return {
@@ -135,9 +134,7 @@ export class ProxyRunner {
         };
       }
       this.options.logger?.info(logContext, "proxy request started");
-      const credentials = input.tenantId
-        ? this.options.connections.forConnection(input.connectionName, tenantId)
-        : this.options.connections.forConnection(input.connectionName);
+      const credentials = this.options.connections.forConnection(input.connectionName, tenantId);
       const result = await executor(request.input, {
         ...credentials,
       });

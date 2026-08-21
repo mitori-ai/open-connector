@@ -45,6 +45,9 @@ export interface ConnectApp {
 }
 
 export async function createConnectApp(options: ConnectAppOptions): Promise<ConnectApp> {
+  if (options.sharedRuntime && !options.secretCodec.encrypted) {
+    throw new Error("Shared runtime OAuth completion requires OOMOL_CONNECT_ENCRYPTION_KEY.");
+  }
   const allowedCustomOAuth = new Set(options.allowedCustomOAuth);
   const isCustomClientConfigAllowed = (service: string): boolean =>
     allowedCustomOAuth.has("*") || allowedCustomOAuth.has(service);
@@ -63,8 +66,8 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
   });
   const runtimeTokens = new RuntimeTokenService(
     options.runtimeDatabase.runtimeTokenStore,
-    options.logger,
     options.runtimeDatabase.connectionStore,
+    options.logger,
   );
   const tenantCredentials = new TenantCredentialService(options.runtimeDatabase.tenantCredentialStore, options.logger);
   const hasStoredRuntimeTokens = (): Promise<boolean> => runtimeTokens.hasTokens();

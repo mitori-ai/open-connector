@@ -115,9 +115,9 @@ export function escapeHtml(value: string): string {
 
 export class HttpRequestError extends Error {
   readonly code: string;
-  readonly status: 400 | 413;
+  readonly status: 400 | 401 | 413;
 
-  constructor(code: string, message: string, status: 400 | 413 = 400) {
+  constructor(code: string, message: string, status: 400 | 401 | 413 = 400) {
     super(message);
     this.code = code;
     this.status = status;

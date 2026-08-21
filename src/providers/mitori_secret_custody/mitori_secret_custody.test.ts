@@ -3,6 +3,7 @@ import type { IConnectionStore, StoredConnection } from "../../connection-servic
 import { describe, expect, it } from "vitest";
 import { createCatalogStore } from "../../catalog-store.ts";
 import { ConnectionService } from "../../connection-service.ts";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { ProviderLoader } from "../provider-loader.ts";
 import { provider } from "./definition.ts";
 import { credentialValidators, executors } from "./executors.ts";
@@ -67,15 +68,17 @@ describe("mitori_secret_custody provider", () => {
     const store = new MemoryConnectionStore();
     const service = createService(store);
     const connectionName = "start-input-01";
-
-    const summary = await service.connectWithCustomCredential(provider.service, {
-      connectionName,
-      values: {
-        payload: JSON.stringify({ secret: secretMarker }),
-        purpose: "start-input",
+    const summary = await service.connectWithCustomCredential(
+      provider.service,
+      {
+        connectionName,
+        values: {
+          payload: JSON.stringify({ secret: secretMarker }),
+          purpose: "start-input",
+        },
       },
-    });
-
+      compatibilityTenantId,
+    );
     expect(summary).toEqual({
       id: `${provider.service}:${connectionName}`,
       service: provider.service,
@@ -91,24 +94,21 @@ describe("mitori_secret_custody provider", () => {
       },
     });
     expect(JSON.stringify(summary)).not.toContain(secretMarker);
-    expect(await service.listConnections()).toEqual([summary]);
-    expect(JSON.stringify(await service.getConnectionSummary(provider.service, connectionName))).not.toContain(
-      secretMarker,
-    );
-
-    const stored = await service.getCredential(provider.service, connectionName);
+    expect(await service.listConnections(compatibilityTenantId)).toEqual([summary]);
+    expect(
+      JSON.stringify(await service.getConnectionSummary(provider.service, connectionName, compatibilityTenantId)),
+    ).not.toContain(secretMarker);
+    const stored = await service.getCredential(provider.service, connectionName, compatibilityTenantId);
     expect(stored?.authType).toBe("custom_credential");
     expect(stored && JSON.stringify(stored)).toContain(secretMarker);
-
-    await expect(service.disconnect(provider.service, connectionName)).resolves.toEqual({
+    await expect(service.disconnect(provider.service, connectionName, compatibilityTenantId)).resolves.toEqual({
       service: provider.service,
       connectionName,
       configured: false,
     });
-    await expect(service.listConnections()).resolves.toEqual([]);
+    await expect(service.listConnections(compatibilityTenantId)).resolves.toEqual([]);
   });
 });
-
 class MemoryConnectionStore implements IConnectionStore {
   private readonly values = new Map<string, StoredConnection>();
   private revision = 0;
@@ -147,5 +147,8 @@ class MemoryConnectionStore implements IConnectionStore {
 
   async list(): Promise<StoredConnection[]> {
     return [...this.values.values()];
+  }
+  async ownsConnection(connectionId: string): Promise<boolean> {
+    return [...this.values.values()].some((connection) => connection.id === connectionId);
   }
 }

@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../../catalog-store.ts";
 import { ConnectionService } from "../../connection-service.ts";
 import { parseTenantId } from "../../core/tenant.ts";
@@ -16,7 +16,7 @@ import { ActionRunner } from "../actions/action-runner.ts";
 import { createLocalAuthMiddleware, readAuthenticatedPrincipal } from "../api/auth.ts";
 import { createConnectApp } from "../connect-app.ts";
 import { TransitFileService } from "../files/transit-files.ts";
-import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
+import { AesGcmSecretCodec } from "../secrets/secret-codec.ts";
 import { RuntimeTokenPolicyError, RuntimeTokenService } from "./runtime-token-service.ts";
 import { SqliteRuntimeDatabase } from "./sqlite-runtime-store.ts";
 import { TenantCredentialService } from "./tenant-credential-service.ts";
@@ -24,11 +24,10 @@ import { TenantCredentialService } from "./tenant-credential-service.ts";
 const tenantA = parseTenantId("tenant-a");
 const tenantB = parseTenantId("tenant-b");
 const temporaryDirectories: string[] = [];
-
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
-
 describe("shared runtime tenant isolation", () => {
   it("requires viable runtime authentication before shared-mode startup", async () => {
     const directory = await mkdtemp(join(tmpdir(), "open-connector-shared-auth-"));
@@ -50,7 +49,7 @@ describe("shared runtime tenant isolation", () => {
     const database = new SqliteRuntimeDatabase(join(directory, "runtime.sqlite"));
     const credentials = new TenantCredentialService(database.tenantCredentialStore);
     await credentials.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
-    const tokens = new RuntimeTokenService(database.runtimeTokenStore);
+    const tokens = new RuntimeTokenService(database.runtimeTokenStore, database.connectionStore);
     const firstToken = await tokens.createToken("runtime-a", undefined, tenantA);
     const { app } = await createSharedTestApp(directory, database, {
       sharedRuntime: true,
@@ -90,7 +89,7 @@ describe("shared runtime tenant isolation", () => {
     const credentials = new TenantCredentialService(database.tenantCredentialStore);
     await credentials.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
     const tenantAdmin = await credentials.issueAdminCredential(tenantA, "Control Center");
-    const tokens = new RuntimeTokenService(database.runtimeTokenStore);
+    const tokens = new RuntimeTokenService(database.runtimeTokenStore, database.connectionStore);
     const runtime = await tokens.createToken("control-center", undefined, tenantA);
     const { app } = await createSharedTestApp(directory, database, {
       sharedRuntime: true,
@@ -222,8 +221,7 @@ describe("shared runtime tenant isolation", () => {
     await expect(database.connectionStore.get("gmail", "default", tenantB)).resolves.toMatchObject({
       credential: { profile: { accountId: "b@example.test" } },
     });
-
-    const tokens = new RuntimeTokenService(database.runtimeTokenStore, undefined, database.connectionStore);
+    const tokens = new RuntimeTokenService(database.runtimeTokenStore, database.connectionStore);
     const tokenA = await tokens.createToken("runtime-a", tokenPolicy([connectionA.id]), tenantA);
     await expect(tokens.createToken("foreign", tokenPolicy([connectionB.id]), tenantA)).rejects.toBeInstanceOf(
       RuntimeTokenPolicyError,
@@ -241,6 +239,7 @@ describe("shared runtime tenant isolation", () => {
       connectionName: "default",
       state: "oauth-a",
       createdAt: new Date().toISOString(),
+      sessionCorrelation: "test-session-correlation",
     });
     await database.oauthStateStore.set({
       tenantId: tenantB,
@@ -248,6 +247,7 @@ describe("shared runtime tenant isolation", () => {
       connectionName: "default",
       state: "oauth-b",
       createdAt: new Date().toISOString(),
+      sessionCorrelation: "test-session-correlation",
     });
     await expect(database.oauthStateStore.take("oauth-a")).resolves.toMatchObject({ tenantId: tenantA });
     await expect(database.oauthStateStore.take("oauth-a")).resolves.toBeUndefined();
@@ -258,9 +258,8 @@ describe("shared runtime tenant isolation", () => {
     await expect(database.runLogStore.list({}, tenantA)).resolves.toMatchObject({ items: [{ id: "run-a" }] });
     await expect(database.runLogStore.get("run-b", tenantA)).resolves.toBeUndefined();
     await expect(database.runLogStore.list({}, tenantB)).resolves.toMatchObject({ items: [{ id: "run-b" }] });
-
     const now = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const expiresAt = new Date(Date.now() + 60000).toISOString();
     await expect(
       database.idempotencyStore.claim({
         tenantId: tenantA,
@@ -335,7 +334,89 @@ describe("shared runtime tenant isolation", () => {
     await expect(
       actionRunner.run({ tenantId: tenantB, actionId: "gmail.account", input: {}, caller: "http" }),
     ).resolves.toMatchObject({ result: { ok: true, output: { accountId: "b@example.test" } } });
+    database.close();
+  });
 
+  it("stages public OAuth callbacks and completes only for the initiating tenant session", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "open-connector-oauth-session-"));
+    temporaryDirectories.push(directory);
+    const secretCodec = new AesGcmSecretCodec("oauth-session-test-key");
+    const database = new SqliteRuntimeDatabase(join(directory, "runtime.sqlite"), { secretCodec });
+    const credentials = new TenantCredentialService(database.tenantCredentialStore);
+    await credentials.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
+    await credentials.createTenant({ id: tenantB, displayName: "Tenant B", createdAt: new Date().toISOString() });
+    const adminA = await credentials.issueAdminCredential(tenantA, "Control Center A");
+    const adminB = await credentials.issueAdminCredential(tenantB, "Control Center B");
+    const tokens = new RuntimeTokenService(database.runtimeTokenStore, database.connectionStore);
+    await tokens.createToken("runtime-a", undefined, tenantA);
+    await database.oauthClientConfigStore.set({
+      service: "gmail",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      extra: {},
+      secretExtra: {},
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ access_token: "tenant-a-access", token_type: "Bearer" })),
+    );
+    const catalog = createCatalogStore([gmailOAuthProvider], {
+      executableActionIds: [gmailOAuthProvider.actions[0]!.id],
+    });
+    const { app } = await createConnectApp({
+      catalog,
+      providerLoader: new TestProviderLoader(),
+      runtimeDatabase: database,
+      transitFiles: new TransitFileService({
+        rootDir: join(directory, "transit"),
+        publicOrigin: "https://connector.example.test",
+        ttlSeconds: 60,
+        maxBytes: 1024,
+      }),
+      publicOrigin: "https://connector.example.test",
+      secretCodec,
+      sharedRuntime: true,
+      allowedCustomOAuth: [],
+      allowedOAuthReturnUrlOrigins: ["https://control-center.example.test"],
+    });
+    const returnUrl = "https://control-center.example.test/oauth/complete";
+    const start = await app.request("/api/tenant/oauth/authorizations", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminA.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        service: "gmail",
+        connectionName: "default",
+        returnUrl,
+        sessionCorrelation: "control-center-session-a",
+      }),
+    });
+    expect(start.status, await start.clone().text()).toBe(200);
+    const started = (await start.json()) as { state: string };
+    const callback = await app.request(`/oauth/callback?state=${started.state}&code=provider-code`);
+    expect(callback.status).toBe(200);
+    await expect(database.connectionStore.get("gmail", "default", tenantA)).resolves.toBeUndefined();
+    const html = await callback.text();
+    const href = html.match(/href="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+    const completionCapability = href ? new URL(href).searchParams.get("oauthCompletion") : undefined;
+    expect(completionCapability).toBeTruthy();
+
+    const complete = async (credential: string, sessionCorrelation: string): Promise<Response> =>
+      await app.request("/api/tenant/oauth/completions", {
+        method: "POST",
+        headers: { authorization: `Bearer ${credential}`, "content-type": "application/json" },
+        body: JSON.stringify({ completionCapability, sessionCorrelation }),
+      });
+    expect((await complete(adminB.credential, "control-center-session-a")).status).toBe(400);
+    expect((await complete(adminA.credential, "control-center-session-b")).status).toBe(400);
+    expect((await complete(adminA.credential, "control-center-session-a")).status).toBe(200);
+    expect((await complete(adminA.credential, "control-center-session-a")).status).toBe(400);
+    await expect(database.connectionStore.get("gmail", "default", tenantA)).resolves.toMatchObject({
+      credential: { accessToken: "tenant-a-access" },
+    });
+    await expect(database.connectionStore.get("gmail", "default", tenantB)).resolves.toBeUndefined();
     database.close();
   });
 });
@@ -372,7 +453,7 @@ async function createSharedTestApp(
       maxBytes: 1024,
     }),
     publicOrigin: "https://connector.example.test",
-    secretCodec: new PlainTextSecretCodec(),
+    secretCodec: new AesGcmSecretCodec("tenant-isolation-test-key"),
     sharedRuntime: options.sharedRuntime,
     adminToken: options.adminToken,
     runtimeToken: options.runtimeToken,
@@ -400,6 +481,19 @@ const gmailProvider: ProviderDefinition = {
   ],
 };
 
+const gmailOAuthProvider: ProviderDefinition = {
+  ...gmailProvider,
+  authTypes: ["oauth2"],
+  auth: [
+    {
+      type: "oauth2",
+      authorizationUrl: "https://accounts.example.test/oauth/authorize",
+      tokenUrl: "https://accounts.example.test/oauth/token",
+      scopes: [],
+      tokenEndpointAuthMethod: "client_secret_post",
+    },
+  ],
+};
 class TestProviderLoader implements IProviderLoader {
   async loadActionExecutor(): Promise<ActionExecutor> {
     return async (_input, context) => {

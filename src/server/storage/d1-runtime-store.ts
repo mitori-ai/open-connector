@@ -18,7 +18,6 @@ import type { IRunLogStore, RunLog, RunLogListInput, RunLogPage, RunLogWriteResu
 import type { IRuntimeTokenStore, RuntimeTokenRecord } from "./runtime-token-service.ts";
 import type { ITenantCredentialStore, TenantAdminCredentialRecord, TenantRecord } from "./tenant-credential-service.ts";
 
-import { compatibilityTenantId } from "../../core/tenant.ts";
 import { parseRuntimeActionHttpResult } from "../api/runtime-api.ts";
 import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
 import { DEFAULT_RUN_LIMIT, decodeRunLogCursor, encodeRunLogCursor } from "./runtime-store.ts";
@@ -63,11 +62,7 @@ export class D1ConnectionStore implements IConnectionStore {
     this.secretCodec = secretCodec;
   }
 
-  async get(
-    service: string,
-    connectionName: string,
-    tenantId: TenantId = compatibilityTenantId,
-  ): Promise<StoredConnection | undefined> {
+  async get(service: string, connectionName: string, tenantId: TenantId): Promise<StoredConnection | undefined> {
     const row = await this.database
       .prepare(
         "select id, revision, value from connections where tenant_id = ? and service = ? and connection_name = ?",
@@ -89,7 +84,7 @@ export class D1ConnectionStore implements IConnectionStore {
     service: string,
     connectionName: string,
     credential: ResolvedCredential,
-    tenantId: TenantId = compatibilityTenantId,
+    tenantId: TenantId,
   ): Promise<StoredConnection> {
     const row = await this.database
       .prepare(
@@ -122,7 +117,7 @@ export class D1ConnectionStore implements IConnectionStore {
     };
   }
 
-  async updateCredential(input: StoredConnection, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async updateCredential(input: StoredConnection, tenantId: TenantId): Promise<boolean> {
     const row = await this.database
       .prepare(
         `
@@ -146,14 +141,14 @@ export class D1ConnectionStore implements IConnectionStore {
     return row !== null;
   }
 
-  async delete(service: string, connectionName: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
+  async delete(service: string, connectionName: string, tenantId: TenantId): Promise<void> {
     await this.database
       .prepare("delete from connections where tenant_id = ? and service = ? and connection_name = ?")
       .bind(tenantId, service, connectionName)
       .run();
   }
 
-  async list(tenantId: TenantId = compatibilityTenantId): Promise<StoredConnection[]> {
+  async list(tenantId: TenantId): Promise<StoredConnection[]> {
     const { results } = await this.database
       .prepare(
         "select id, revision, service, connection_name, value from connections where tenant_id = ? order by service, connection_name",
@@ -171,7 +166,7 @@ export class D1ConnectionStore implements IConnectionStore {
     );
   }
 
-  async ownsConnection(connectionId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async ownsConnection(connectionId: string, tenantId: TenantId): Promise<boolean> {
     return Boolean(
       await this.database
         .prepare("select 1 from connections where tenant_id = ? and id = ?")
@@ -239,12 +234,7 @@ export class D1OAuthStateStore implements IOAuthStateStore {
         on conflict(state) do update set tenant_id = excluded.tenant_id, value = excluded.value, created_at = excluded.created_at
       `,
       )
-      .bind(
-        state.state,
-        state.tenantId ?? compatibilityTenantId,
-        await this.secretCodec.encode(JSON.stringify(state)),
-        state.createdAt,
-      )
+      .bind(state.state, state.tenantId, await this.secretCodec.encode(JSON.stringify(state)), state.createdAt)
       .run();
   }
 
@@ -284,7 +274,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
       )
       .bind(
         record.id,
-        record.tenantId ?? compatibilityTenantId,
+        record.tenantId,
         record.name,
         record.tokenHash,
         JSON.stringify(record.allowedActions),
@@ -297,7 +287,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
       .run();
   }
 
-  async list(tenantId: TenantId = compatibilityTenantId): Promise<RuntimeTokenRecord[]> {
+  async list(tenantId: TenantId): Promise<RuntimeTokenRecord[]> {
     const { results } = await this.database
       .prepare(
         `
@@ -326,11 +316,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async updatePolicy(
-    id: string,
-    policy: TokenPolicy,
-    tenantId: TenantId = compatibilityTenantId,
-  ): Promise<RuntimeTokenRecord | undefined> {
+  async updatePolicy(id: string, policy: TokenPolicy, tenantId: TenantId): Promise<RuntimeTokenRecord | undefined> {
     const row = await this.database
       .prepare(
         `
@@ -352,7 +338,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async revoke(id: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async revoke(id: string, tenantId: TenantId): Promise<boolean> {
     const result = await this.database
       .prepare("delete from runtime_tokens where tenant_id = ? and id = ?")
       .bind(tenantId, id)
@@ -360,7 +346,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
     return (result.meta.changes ?? 0) > 0;
   }
 
-  async markUsed(id: string, usedAt: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
+  async markUsed(id: string, usedAt: string, tenantId: TenantId): Promise<void> {
     await this.database
       .prepare("update runtime_tokens set last_used_at = ? where tenant_id = ? and id = ? and revoked_at is null")
       .bind(usedAt, tenantId, id)
@@ -557,14 +543,7 @@ export class D1IdempotencyStore implements IIdempotencyStore {
         on conflict(tenant_id, key_hash) do nothing
       `,
       )
-      .bind(
-        input.tenantId ?? compatibilityTenantId,
-        input.keyHash,
-        input.claimId,
-        input.requestHash,
-        input.now,
-        input.expiresAt,
-      )
+      .bind(input.tenantId, input.keyHash, input.claimId, input.requestHash, input.now, input.expiresAt)
       .run();
     if ((inserted.meta.changes ?? 0) > 0) {
       return { kind: "acquired" };
@@ -574,7 +553,7 @@ export class D1IdempotencyStore implements IIdempotencyStore {
       .prepare(
         "select request_hash, state, response_value from idempotency_records where tenant_id = ? and key_hash = ?",
       )
-      .bind(input.tenantId ?? compatibilityTenantId, input.keyHash)
+      .bind(input.tenantId, input.keyHash)
       .first<RuntimeRow>();
     if (!row) {
       throw new Error("Idempotency record disappeared while claiming it.");
@@ -608,7 +587,7 @@ export class D1IdempotencyStore implements IIdempotencyStore {
       .bind(
         await this.secretCodec.encode(JSON.stringify(input.response)),
         input.expiresAt,
-        input.tenantId ?? compatibilityTenantId,
+        input.tenantId,
         input.keyHash,
         input.claimId,
         input.requestHash,
@@ -627,7 +606,7 @@ export class D1RunLogStore implements IRunLogStore {
     this.limit = limit;
   }
 
-  async add(run: RunLog, tenantId: TenantId = compatibilityTenantId): Promise<RunLogWriteResult> {
+  async add(run: RunLog, tenantId: TenantId): Promise<RunLogWriteResult> {
     await this.database
       .prepare(
         `
@@ -677,7 +656,7 @@ export class D1RunLogStore implements IRunLogStore {
     }
   }
 
-  async get(id: string, tenantId: TenantId = compatibilityTenantId): Promise<RunLog | undefined> {
+  async get(id: string, tenantId: TenantId): Promise<RunLog | undefined> {
     const row = await this.database
       .prepare("select service, value from runs where tenant_id = ? and id = ?")
       .bind(tenantId, id)
@@ -685,7 +664,7 @@ export class D1RunLogStore implements IRunLogStore {
     return row ? readRunLogRow(row) : undefined;
   }
 
-  async list(input: RunLogListInput = {}, tenantId: TenantId = compatibilityTenantId): Promise<RunLogPage> {
+  async list(input: RunLogListInput, tenantId: TenantId): Promise<RunLogPage> {
     const limit = Math.max(1, Math.min(input.limit ?? this.limit, this.limit));
     const cursor = decodeRunLogCursor(input.cursor);
     const conditions: string[] = ["tenant_id = ?"];

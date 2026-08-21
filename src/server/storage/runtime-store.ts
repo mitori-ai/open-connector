@@ -75,7 +75,7 @@ export function decodeRunLogCursor(cursor: string | undefined): RunLogCursor | u
  * Storage contract for recent action run logs.
  */
 export interface IRunLogStore {
-  add(run: RunLog, tenantId?: TenantId): Promise<RunLogWriteResult>;
-  get(id: string, tenantId?: TenantId): Promise<RunLog | undefined>;
-  list(input?: RunLogListInput, tenantId?: TenantId): Promise<RunLogPage>;
+  add(run: RunLog, tenantId: TenantId): Promise<RunLogWriteResult>;
+  get(id: string, tenantId: TenantId): Promise<RunLog | undefined>;
+  list(input: RunLogListInput, tenantId: TenantId): Promise<RunLogPage>;
 }

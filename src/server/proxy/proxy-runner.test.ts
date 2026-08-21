@@ -14,8 +14,8 @@ import type { Logger } from "../logger.ts";
 import { describe, expect, it, vi } from "vitest";
 import { ConnectionError } from "../../connection-service.ts";
 import { ActionPolicyService } from "../../core/action-policy.ts";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { ProxyRunner } from "./proxy-runner.ts";
-
 const provider: ProviderDefinition = {
   service: "example",
   displayName: "Example",
@@ -24,8 +24,12 @@ const provider: ProviderDefinition = {
   auth: [{ type: "api_key" }],
   actions: [],
 };
-
-const credential: Extract<ResolvedCredential, { authType: "api_key" }> = {
+const credential: Extract<
+  ResolvedCredential,
+  {
+    authType: "api_key";
+  }
+> = {
   authType: "api_key",
   apiKey: "example-key",
   values: { apiKey: "example-key" },
@@ -47,6 +51,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: null,
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -73,6 +78,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -103,9 +109,13 @@ describe("ProxyRunner", () => {
       },
       { allowedActions: [], blockedActions: ["example.*"], allowedProxies: ["example"] },
     );
-
     await expect(
-      runner.run({ service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
+      runner.run({
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy,
+        tenantId: compatibilityTenantId,
+      }),
     ).resolves.toMatchObject({
       ok: false,
       errorCode: "proxy_blocked",
@@ -133,9 +143,13 @@ describe("ProxyRunner", () => {
       },
       { allowedActions: ["*"], blockedActions: [], allowedProxies: [] },
     );
-
     await expect(
-      runner.run({ service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
+      runner.run({
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy,
+        tenantId: compatibilityTenantId,
+      }),
     ).resolves.toMatchObject({
       ok: false,
       errorCode: "proxy_not_allowed",
@@ -168,9 +182,13 @@ describe("ProxyRunner", () => {
       allowedProxies: ["example"],
       allowedConnections: [otherConnectionId],
     });
-
     await expect(
-      runner.run({ service: "example", input: { endpoint: "/items", method: "GET" }, policy }),
+      runner.run({
+        service: "example",
+        input: { endpoint: "/items", method: "GET" },
+        policy,
+        tenantId: compatibilityTenantId,
+      }),
     ).resolves.toMatchObject({
       ok: false,
       status: 403,
@@ -182,6 +200,7 @@ describe("ProxyRunner", () => {
         connectionName: "hidden",
         input: { endpoint: "/items", method: "GET" },
         policy,
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -217,6 +236,7 @@ describe("ProxyRunner", () => {
           allowedProxies: ["example"],
           allowedConnections: [connectionId],
         }),
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({ ok: true });
     await expect(
@@ -230,6 +250,7 @@ describe("ProxyRunner", () => {
           allowedProxies: ["example"],
           allowedConnections: [],
         }),
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({ ok: true });
     expect(proxy).toHaveBeenCalledTimes(2);
@@ -271,6 +292,7 @@ describe("ProxyRunner", () => {
           allowedProxies: ["example"],
           allowedConnections: [otherConnectionId],
         }),
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({ ok: true });
   });
@@ -303,6 +325,7 @@ describe("ProxyRunner", () => {
           allowedProxies: ["example"],
           allowedConnections: [otherConnectionId],
         }),
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({ ok: false, status: 403, errorCode: "connection_not_allowed" });
     expect(proxy).not.toHaveBeenCalled();
@@ -327,6 +350,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -346,6 +370,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "https://evil.test/a", method: "GET" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -375,7 +400,9 @@ describe("ProxyRunner", () => {
       "/http://169.254.169.254/latest/meta-data/",
       "/http:/169.254.169.254/",
     ]) {
-      await expect(runner.run({ service: "example", input: { endpoint, method: "GET" } })).resolves.toMatchObject({
+      await expect(
+        runner.run({ service: "example", input: { endpoint, method: "GET" }, tenantId: compatibilityTenantId }),
+      ).resolves.toMatchObject({
         ok: false,
         status: 400,
         errorCode: "invalid_input",
@@ -407,6 +434,7 @@ describe("ProxyRunner", () => {
         service: "example",
         connectionName: "work",
         input: { endpoint: "/items", method: "post", query: { limit: 1 } },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toEqual({
       ok: true,
@@ -427,9 +455,8 @@ describe("ProxyRunner", () => {
         getCredential: expect.any(Function),
       }),
     );
-    expect(connections.forConnection).toHaveBeenCalledWith("work");
+    expect(connections.forConnection).toHaveBeenCalledWith("work", compatibilityTenantId);
   });
-
   it("passes HEAD requests through to provider proxy executors", async () => {
     const proxy: ProviderProxyExecutor = vi.fn(
       async (): Promise<ProxyExecutionResult> => ({
@@ -445,6 +472,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "HEAD" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -472,6 +500,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET", body: { ignored: true } },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -495,6 +524,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "POST", [field]: "not-an-object" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -516,6 +546,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toEqual({
       ok: false,
@@ -541,6 +572,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -569,8 +601,8 @@ describe("ProxyRunner", () => {
     await runner.run({
       service: "example",
       input: { endpoint: "/items?access_token=secret", method: "GET" },
+      tenantId: compatibilityTenantId,
     });
-
     expect(info).toHaveBeenCalledWith(
       expect.objectContaining({
         endpoint: "/items",
@@ -599,6 +631,7 @@ describe("ProxyRunner", () => {
         service: "example",
         connectionName: "work",
         input: { endpoint: "/items", method: "GET" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -623,6 +656,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -648,6 +682,7 @@ describe("ProxyRunner", () => {
       runner.run({
         service: "example",
         input: { endpoint: "/items", method: "GET" },
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toMatchObject({
       ok: false,

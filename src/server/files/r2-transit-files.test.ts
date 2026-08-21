@@ -1,15 +1,17 @@
 import type { R2BucketBinding, R2ObjectBinding } from "../cloudflare/cloudflare-bindings.ts";
 
 import { describe, expect, it } from "vitest";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { R2TransitFileService } from "./r2-transit-files.ts";
 import { TransitFileError } from "./transit-file-store.ts";
-
 describe("R2TransitFileService", () => {
   it("uploads, reads, and deletes transit files", async () => {
     const bucket = new MemoryR2Bucket();
     const service = createService(bucket);
-
-    const upload = await service.create(new File(["hello transit"], "report.TXT", { type: "text/plain" }));
+    const upload = await service.create(
+      new File(["hello transit"], "report.TXT", { type: "text/plain" }),
+      compatibilityTenantId,
+    );
     expect(upload.fileId).toMatch(/^[a-f0-9]{32}\.txt$/);
     expect(upload.downloadUrl).toBe(`http://localhost:3000/api/files/${upload.fileId}`);
     expect(upload).toMatchObject({
@@ -17,54 +19,50 @@ describe("R2TransitFileService", () => {
       name: "report.TXT",
       mimeType: "text/plain",
     });
-
-    const read = await service.read(upload.fileId);
+    const read = await service.read(upload.fileId, compatibilityTenantId);
     expect(read).toMatchObject({
       sizeBytes: 13,
       name: "report.TXT",
       mimeType: "text/plain",
     });
     await expect(read.file.text()).resolves.toBe("hello transit");
-
-    const response = await service.response(upload.fileId);
+    const response = await service.response(upload.fileId, compatibilityTenantId);
     expect(response.headers.get("content-type")).toBe("text/plain");
     await expect(response.text()).resolves.toBe("hello transit");
-
-    await expect(service.delete(upload.fileId)).resolves.toBe(true);
-    await expect(service.delete(upload.fileId)).resolves.toBe(false);
-    await expect(service.read(upload.fileId)).rejects.toMatchObject({ status: 404, code: "file_not_found" });
+    await expect(service.delete(upload.fileId, compatibilityTenantId)).resolves.toBe(true);
+    await expect(service.delete(upload.fileId, compatibilityTenantId)).resolves.toBe(false);
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toMatchObject({
+      status: 404,
+      code: "file_not_found",
+    });
   });
-
   it("rejects files over the configured limit", async () => {
     const service = createService(new MemoryR2Bucket(), { maxBytes: 4 });
-
-    await expect(service.create(new File(["12345"], "large.bin"))).rejects.toMatchObject({
+    await expect(service.create(new File(["12345"], "large.bin"), compatibilityTenantId)).rejects.toMatchObject({
       status: 413,
       code: "file_too_large",
     });
   });
-
   it("treats expired files as not found", async () => {
     const service = createService(new MemoryR2Bucket(), { ttlSeconds: -1 });
-    const upload = await service.create(new File(["old"], "old.txt"));
-
-    await expect(service.read(upload.fileId)).rejects.toBeInstanceOf(TransitFileError);
-    await expect(service.read(upload.fileId)).rejects.toMatchObject({ status: 404 });
+    const upload = await service.create(new File(["old"], "old.txt"), compatibilityTenantId);
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toBeInstanceOf(TransitFileError);
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toMatchObject({ status: 404 });
   });
-
   it("treats malformed metadata as not found", async () => {
     const bucket = new MemoryR2Bucket();
     const service = createService(bucket);
-    const upload = await service.create(new File(["broken"], "broken.txt"));
+    const upload = await service.create(new File(["broken"], "broken.txt"), compatibilityTenantId);
     await bucket.put(`transit/${upload.fileId}.meta.json`, "{");
-
-    await expect(service.read(upload.fileId)).rejects.toMatchObject({ status: 404 });
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toMatchObject({ status: 404 });
   });
 });
-
 function createService(
   bucket: MemoryR2Bucket,
-  options: { ttlSeconds?: number; maxBytes?: number } = {},
+  options: {
+    ttlSeconds?: number;
+    maxBytes?: number;
+  } = {},
 ): R2TransitFileService {
   return new R2TransitFileService({
     bucket,
@@ -80,7 +78,12 @@ class MemoryR2Bucket implements R2BucketBinding {
   async put(
     key: string,
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string | Blob,
-    options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> },
+    options?: {
+      httpMetadata?: {
+        contentType?: string;
+      };
+      customMetadata?: Record<string, string>;
+    },
   ): Promise<unknown> {
     this.objects.set(
       key,
@@ -97,15 +100,20 @@ class MemoryR2Bucket implements R2BucketBinding {
     this.objects.delete(key);
   }
 }
-
 class MemoryR2Object implements R2ObjectBinding {
   readonly body: ReadableStream;
-  readonly httpMetadata?: { contentType?: string };
+  readonly httpMetadata?: {
+    contentType?: string;
+  };
   readonly customMetadata?: Record<string, string>;
-
   private readonly bytes: ArrayBuffer;
-
-  constructor(bytes: ArrayBuffer, httpMetadata?: { contentType?: string }, customMetadata?: Record<string, string>) {
+  constructor(
+    bytes: ArrayBuffer,
+    httpMetadata?: {
+      contentType?: string;
+    },
+    customMetadata?: Record<string, string>,
+  ) {
     this.bytes = bytes;
     this.body = new Blob([bytes]).stream();
     this.httpMetadata = httpMetadata;

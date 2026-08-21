@@ -6,9 +6,9 @@ import type { IProviderLoader } from "./providers/provider-loader.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "./catalog-store.ts";
 import { ConnectionService } from "./connection-service.ts";
+import { compatibilityTenantId } from "./core/tenant.ts";
 import { OAuthClientConfigService } from "./oauth/oauth-client-config-service.ts";
 import { OAuthCredentialRefreshService } from "./oauth/oauth-credential-refresh-service.ts";
-
 const hackernewsProvider: ProviderDefinition = {
   service: "hackernews",
   displayName: "Hacker News",
@@ -133,27 +133,29 @@ afterEach(() => {
 describe("ConnectionService", () => {
   it("rejects connections for providers unavailable in the current runtime", async () => {
     const service = createService([catalogOnlyProvider]);
-
     await expect(
-      service.connectWithCustomCredential("catalog_only", {
-        values: {
-          host: "localhost",
-          password: "secret",
+      service.connectWithCustomCredential(
+        "catalog_only",
+        {
+          values: {
+            host: "localhost",
+            password: "secret",
+          },
         },
-      }),
+        compatibilityTenantId,
+      ),
     ).rejects.toMatchObject({
       code: "provider_unavailable",
       message: "Catalog Only is not available in this runtime.",
     });
-
-    await expect(service.listConnections()).resolves.toEqual([]);
+    await expect(service.listConnections(compatibilityTenantId)).resolves.toEqual([]);
   });
-
   it("exposes no_auth providers as virtual connections", async () => {
     const service = createService([hackernewsProvider]);
-
-    await expect(service.getCredential("hackernews")).resolves.toEqual({ authType: "no_auth" });
-    await expect(service.listConnections()).resolves.toEqual([
+    await expect(service.getCredential("hackernews", undefined, compatibilityTenantId)).resolves.toEqual({
+      authType: "no_auth",
+    });
+    await expect(service.listConnections(compatibilityTenantId)).resolves.toEqual([
       {
         id: "hackernews:default",
         service: "hackernews",
@@ -170,18 +172,19 @@ describe("ConnectionService", () => {
       },
     ]);
   });
-
   it("stores API key credentials as resolved credentials", async () => {
     const service = createService([apiKeyProvider]);
-
-    await service.connectWithApiKey("uptimerobot", {
-      values: {
-        apiKey: " test-key ",
-        accountId: " account-1 ",
+    await service.connectWithApiKey(
+      "uptimerobot",
+      {
+        values: {
+          apiKey: " test-key ",
+          accountId: " account-1 ",
+        },
       },
-    });
-
-    await expect(service.getCredential("uptimerobot")).resolves.toMatchObject({
+      compatibilityTenantId,
+    );
+    await expect(service.getCredential("uptimerobot", undefined, compatibilityTenantId)).resolves.toMatchObject({
       authType: "api_key",
       apiKey: "test-key",
       values: {
@@ -190,65 +193,72 @@ describe("ConnectionService", () => {
       },
     });
   });
-
   it("requires declared API key extra fields", async () => {
     const service = createService([apiKeyProvider]);
-
     await expect(
-      service.connectWithApiKey("uptimerobot", {
-        values: {
-          apiKey: "test-key",
+      service.connectWithApiKey(
+        "uptimerobot",
+        {
+          values: {
+            apiKey: "test-key",
+          },
         },
-      }),
+        compatibilityTenantId,
+      ),
     ).rejects.toMatchObject({
       code: "invalid_input",
       message: "accountId is required.",
     });
   });
-
   it("rejects undeclared API key fields", async () => {
     const service = createService([apiKeyProvider]);
-
     await expect(
-      service.connectWithApiKey("uptimerobot", {
-        values: {
-          apiKey: "test-key",
-          accountId: "account-1",
-          region: "us",
+      service.connectWithApiKey(
+        "uptimerobot",
+        {
+          values: {
+            apiKey: "test-key",
+            accountId: "account-1",
+            region: "us",
+          },
         },
-      }),
+        compatibilityTenantId,
+      ),
     ).rejects.toMatchObject({
       code: "invalid_input",
       message: "Unexpected credential field: region.",
     });
   });
-
   it("requires declared custom credential fields", async () => {
     const service = createService([customCredentialProvider]);
-
     await expect(
-      service.connectWithCustomCredential("database", {
-        values: {
-          host: "localhost",
+      service.connectWithCustomCredential(
+        "database",
+        {
+          values: {
+            host: "localhost",
+          },
         },
-      }),
+        compatibilityTenantId,
+      ),
     ).rejects.toMatchObject({
       code: "invalid_input",
       message: "password is required.",
     });
   });
-
   it("stores custom credential values after trimming declared fields", async () => {
     const service = createService([customCredentialProvider]);
-
-    await service.connectWithCustomCredential("database", {
-      values: {
-        host: " localhost ",
-        password: " secret ",
+    await service.connectWithCustomCredential(
+      "database",
+      {
+        values: {
+          host: " localhost ",
+          password: " secret ",
+        },
       },
-    });
-
-    await expect(service.getCredential("database")).resolves.toMatchObject({
+      compatibilityTenantId,
+    );
+    await expect(service.getCredential("database", undefined, compatibilityTenantId)).resolves.toMatchObject({
       authType: "custom_credential",
       values: {
         host: "localhost",
@@ -276,27 +286,33 @@ describe("ConnectionService", () => {
     const service = createService([apiKeyProvider], {
       providerLoader: new FakeProviderLoader(validators),
     });
-
     await expect(
-      service.connectWithApiKey("uptimerobot", {
-        values: {
-          apiKey: "bad-key",
-          accountId: "account-1",
+      service.connectWithApiKey(
+        "uptimerobot",
+        {
+          values: {
+            apiKey: "bad-key",
+            accountId: "account-1",
+          },
         },
-      }),
+        compatibilityTenantId,
+      ),
     ).rejects.toMatchObject({
       code: "credential_verification_failed",
       message: "invalid key",
     });
-    await expect(service.getCredential("uptimerobot")).resolves.toBeUndefined();
-
-    await service.connectWithApiKey("uptimerobot", {
-      values: {
-        apiKey: "valid-key",
-        accountId: "account-1",
+    await expect(service.getCredential("uptimerobot", undefined, compatibilityTenantId)).resolves.toBeUndefined();
+    await service.connectWithApiKey(
+      "uptimerobot",
+      {
+        values: {
+          apiKey: "valid-key",
+          accountId: "account-1",
+        },
       },
-    });
-    await expect(service.getCredential("uptimerobot")).resolves.toMatchObject({
+      compatibilityTenantId,
+    );
+    await expect(service.getCredential("uptimerobot", undefined, compatibilityTenantId)).resolves.toMatchObject({
       authType: "api_key",
       apiKey: "valid-key",
       profile: {
@@ -319,17 +335,18 @@ describe("ConnectionService", () => {
       logger,
       providerLoader: new FakeProviderLoader(validators),
     });
-
-    await service.connectWithApiKey("uptimerobot", {
-      values: {
-        apiKey: "valid-key",
-        accountId: "account-1",
+    await service.connectWithApiKey(
+      "uptimerobot",
+      {
+        values: {
+          apiKey: "valid-key",
+          accountId: "account-1",
+        },
       },
-    });
-
+      compatibilityTenantId,
+    );
     expect(logger.info).toHaveBeenCalledWith({ service: "uptimerobot" }, "validator log");
   });
-
   it("passes a receiver-safe fetcher to credential validators", async () => {
     let nativeFetchThis: unknown = null;
     vi.stubGlobal(
@@ -350,14 +367,17 @@ describe("ConnectionService", () => {
         },
       }),
     });
-
     await expect(
-      service.connectWithApiKey("uptimerobot", {
-        values: {
-          apiKey: "valid-key",
-          accountId: "account-1",
+      service.connectWithApiKey(
+        "uptimerobot",
+        {
+          values: {
+            apiKey: "valid-key",
+            accountId: "account-1",
+          },
         },
-      }),
+        compatibilityTenantId,
+      ),
     ).resolves.toMatchObject({ service: "uptimerobot", configured: true });
     expect(nativeFetchThis).toBeUndefined();
   });
@@ -376,14 +396,17 @@ describe("ConnectionService", () => {
         },
       }),
     });
-
     await expect(
-      service.connectWithApiKey("uptimerobot", {
-        values: {
-          apiKey: "valid-key",
-          accountId: "account-1",
+      service.connectWithApiKey(
+        "uptimerobot",
+        {
+          values: {
+            apiKey: "valid-key",
+            accountId: "account-1",
+          },
         },
-      }),
+        compatibilityTenantId,
+      ),
     ).resolves.toMatchObject({
       service: "uptimerobot",
       profile: {
@@ -392,7 +415,7 @@ describe("ConnectionService", () => {
         grantedScopes: ["read", "write"],
       },
     });
-    await expect(service.listConnections()).resolves.toMatchObject([
+    await expect(service.listConnections(compatibilityTenantId)).resolves.toMatchObject([
       {
         service: "uptimerobot",
         profile: {
@@ -412,22 +435,26 @@ describe("ConnectionService", () => {
         },
       }),
     });
-
     await expect(
-      service.setOAuthCredential("example", {
-        authType: "oauth2",
-        accessToken: "access-token",
-        tokenType: "Bearer",
-        profile: testProfile,
-        metadata: {},
-      }),
+      service.setOAuthCredential(
+        "example",
+        {
+          authType: "oauth2",
+          accessToken: "access-token",
+          tokenType: "Bearer",
+          profile: testProfile,
+          metadata: {},
+        },
+        undefined,
+        compatibilityTenantId,
+      ),
     ).resolves.toMatchObject({
       service: "example",
       authType: "oauth2",
       configured: true,
       profile: testProfile,
     });
-    await expect(service.getCredential("example")).resolves.toMatchObject({
+    await expect(service.getCredential("example", undefined, compatibilityTenantId)).resolves.toMatchObject({
       authType: "oauth2",
       accessToken: "access-token",
     });
@@ -466,8 +493,7 @@ describe("ConnectionService", () => {
         }),
       ),
     );
-
-    await expect(service.getCredential("example")).resolves.toMatchObject({
+    await expect(service.getCredential("example", undefined, compatibilityTenantId)).resolves.toMatchObject({
       authType: "oauth2",
       accessToken: "fresh-token",
       refreshToken: "refresh-token",
@@ -520,9 +546,10 @@ describe("ConnectionService", () => {
       }),
     );
     vi.stubGlobal("fetch", fetcher);
-
-    const credentials = await Promise.all([service.getCredential("example"), service.getCredential("example")]);
-
+    const credentials = await Promise.all([
+      service.getCredential("example", undefined, compatibilityTenantId),
+      service.getCredential("example", undefined, compatibilityTenantId),
+    ]);
     expect(credentials).toEqual([
       expect.objectContaining({ accessToken: "fresh-token" }),
       expect.objectContaining({ accessToken: "fresh-token" }),
@@ -566,8 +593,7 @@ describe("ConnectionService", () => {
         return response;
       }),
     );
-
-    const execution = service.resolveForExecution("example");
+    const execution = service.resolveForExecution("example", undefined, compatibilityTenantId);
     await refreshStarted;
     await store.delete("example", "default");
     const recreated = await store.set("example", "default", {
@@ -641,8 +667,7 @@ describe("ConnectionService", () => {
         return response;
       }),
     );
-
-    const originalExecution = service.resolveForExecution("example");
+    const originalExecution = service.resolveForExecution("example", undefined, compatibilityTenantId);
     await originalRefreshStarted;
     const replaced = await store.set("example", "default", {
       authType: "oauth2",
@@ -653,7 +678,7 @@ describe("ConnectionService", () => {
       profile: testProfile,
       metadata: {},
     });
-    const replacementExecution = service.resolveForExecution("example");
+    const replacementExecution = service.resolveForExecution("example", undefined, compatibilityTenantId);
     await replacementRefreshStarted;
     expect(fetch).toHaveBeenCalledTimes(2);
     completeRefreshes[1]!(
@@ -716,8 +741,7 @@ describe("ConnectionService", () => {
         }),
       ),
     );
-
-    await expect(service.getCredential("refresh_example")).resolves.toMatchObject({
+    await expect(service.getCredential("refresh_example", undefined, compatibilityTenantId)).resolves.toMatchObject({
       authType: "oauth2",
       accessToken: "fresh-token",
     });
@@ -740,8 +764,7 @@ describe("ConnectionService", () => {
       profile: testProfile,
       metadata: {},
     });
-
-    await expect(service.getCredential("example")).rejects.toMatchObject({
+    await expect(service.getCredential("example", undefined, compatibilityTenantId)).rejects.toMatchObject({
       code: "oauth_token_expired",
     });
   });
@@ -756,8 +779,7 @@ describe("ConnectionService", () => {
       profile: testProfile,
       metadata: {},
     });
-
-    const resolved = await service.resolveForExecution("uptimerobot");
+    const resolved = await service.resolveForExecution("uptimerobot", undefined, compatibilityTenantId);
     const updated = await store.set("uptimerobot", "default", {
       authType: "api_key",
       apiKey: "replacement-key",
@@ -865,8 +887,10 @@ class MemoryConnectionStore implements IConnectionStore {
   async list(): Promise<StoredConnection[]> {
     return [...this.store.values()];
   }
+  async ownsConnection(connectionId: string): Promise<boolean> {
+    return [...this.store.values()].some((connection) => connection.id === connectionId);
+  }
 }
-
 function createConnectionKey(service: string, connectionName: string): string {
   return `${service}:${connectionName}`;
 }

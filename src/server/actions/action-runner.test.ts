@@ -8,9 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../../catalog-store.ts";
 import { ConnectionService } from "../../connection-service.ts";
 import { ActionPolicyService } from "../../core/action-policy.ts";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { ActionRunner } from "./action-runner.ts";
 import * as runLogSummary from "./run-log-summary.ts";
-
 const echoAction: ActionDefinition = {
   id: "example.echo",
   service: "example",
@@ -35,7 +35,12 @@ const authenticatedProvider: ProviderDefinition = {
   authTypes: ["no_auth", "api_key"],
   auth: [{ type: "no_auth" }, { type: "api_key" }],
 };
-const credential: Extract<ResolvedCredential, { authType: "api_key" }> = {
+const credential: Extract<
+  ResolvedCredential,
+  {
+    authType: "api_key";
+  }
+> = {
   authType: "api_key",
   apiKey: "example-key",
   values: { apiKey: "example-key" },
@@ -57,8 +62,8 @@ describe("ActionRunner", () => {
       actionId: "example.echo",
       input: { message: "hello", token: "secret" },
       caller: "http",
+      tenantId: compatibilityTenantId,
     });
-
     expect(run).toMatchObject({ auditPersisted: true, result: { ok: true } });
     expect(runs.items).toEqual([
       expect.objectContaining({
@@ -83,9 +88,12 @@ describe("ActionRunner", () => {
     runs.addError = new Error("secret-in-storage");
     const { entries, logger } = createTestLogger();
     const runner = createRunner({ runs, logger });
-
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "mcp" });
-
+    const run = await runner.run({
+      actionId: "example.echo",
+      input: {},
+      caller: "mcp",
+      tenantId: compatibilityTenantId,
+    });
     expect(run).toMatchObject({
       auditPersisted: false,
       result: { ok: true, output: { message: "ok" } },
@@ -100,9 +108,12 @@ describe("ActionRunner", () => {
     const runs = new MemoryRunLogStore();
     const { entries, logger } = createTestLogger();
     const runner = createRunner({ runs, logger });
-
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "web" });
-
+    const run = await runner.run({
+      actionId: "example.echo",
+      input: {},
+      caller: "web",
+      tenantId: compatibilityTenantId,
+    });
     expect(run?.result).toEqual({ ok: true, output: { message: "ok" } });
     expect(runs.items[0]).toMatchObject({ inputSummary: "[unavailable]" });
     expect(JSON.stringify(entries)).not.toContain("secret-in-summary");
@@ -118,9 +129,12 @@ describe("ActionRunner", () => {
         throw new Error("secret-in-executor");
       }),
     });
-
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "http" });
-
+    const run = await runner.run({
+      actionId: "example.echo",
+      input: {},
+      caller: "http",
+      tenantId: compatibilityTenantId,
+    });
     expect(run?.result).toEqual({
       ok: false,
       error: { code: "internal_error", message: "Action execution failed unexpectedly." },
@@ -158,6 +172,7 @@ describe("ActionRunner", () => {
       input: {},
       caller: "http",
       signal: controller.signal,
+      tenantId: compatibilityTenantId,
     });
     await started;
     controller.abort();
@@ -188,8 +203,8 @@ describe("ActionRunner", () => {
       input: {},
       caller: "http",
       signal: controller.signal,
+      tenantId: compatibilityTenantId,
     });
-
     expect(run?.result).toMatchObject({ ok: false, error: { code: "execution_cancelled" } });
     expect(resolveConnection).not.toHaveBeenCalled();
     expect(loadExecutor).not.toHaveBeenCalled();
@@ -219,6 +234,7 @@ describe("ActionRunner", () => {
       input: {},
       caller: "http",
       signal: controller.signal,
+      tenantId: compatibilityTenantId,
     });
     await vi.waitFor(() => expect(getConnectionSummary).toHaveBeenCalledOnce());
     controller.abort();
@@ -241,12 +257,14 @@ describe("ActionRunner", () => {
         return { ok: true, output: {} };
       }),
     });
-
-    const run = await runner.run({ actionId: "example.echo", input: {}, caller: "web" });
-
+    const run = await runner.run({
+      actionId: "example.echo",
+      input: {},
+      caller: "web",
+      tenantId: compatibilityTenantId,
+    });
     expect(run?.result.ok).toBe(true);
   });
-
   it("records policy denial before resolving a connection or loading an executor", async () => {
     const runs = new MemoryRunLogStore();
     const { logger } = createTestLogger();
@@ -262,8 +280,8 @@ describe("ActionRunner", () => {
       caller: "http",
       policy: actionPolicy.createSnapshot(),
       runtimeTokenId: "token-1",
+      tenantId: compatibilityTenantId,
     });
-
     expect(run).toMatchObject({
       result: { ok: false, error: { code: "action_blocked" } },
       auditPersisted: true,
@@ -299,6 +317,7 @@ describe("ActionRunner", () => {
       caller: "http",
       policy,
       runtimeTokenId: "token-1",
+      tenantId: compatibilityTenantId,
     });
     const hidden = await runner.run({
       actionId: "example.echo",
@@ -307,8 +326,8 @@ describe("ActionRunner", () => {
       connectionName: "hidden",
       policy,
       runtimeTokenId: "token-1",
+      tenantId: compatibilityTenantId,
     });
-
     expect(omitted?.result).toMatchObject({ ok: true });
     expect(hidden?.result).toMatchObject({ ok: true });
     expect(resolveConnection).toHaveBeenCalledTimes(2);
@@ -344,6 +363,7 @@ describe("ActionRunner", () => {
         allowedProxies: [],
         allowedConnections: [connection.id],
       }),
+      tenantId: compatibilityTenantId,
     });
     const unrestricted = await runner.run({
       actionId: "example.echo",
@@ -356,6 +376,7 @@ describe("ActionRunner", () => {
         allowedProxies: [],
         allowedConnections: [],
       }),
+      tenantId: compatibilityTenantId,
     });
     const denied = await runner.run({
       actionId: "example.echo",
@@ -368,8 +389,8 @@ describe("ActionRunner", () => {
         allowedProxies: [],
         allowedConnections: ["another-connection-id"],
       }),
+      tenantId: compatibilityTenantId,
     });
-
     expect(allowed?.result).toMatchObject({ ok: true });
     expect(unrestricted?.result).toMatchObject({ ok: true });
     expect(denied?.result).toMatchObject({ ok: false, error: { code: "connection_not_allowed" } });
@@ -453,13 +474,16 @@ class MemoryConnectionStore implements IConnectionStore {
   async list(): Promise<StoredConnection[]> {
     return [...this.connections.values()];
   }
+  async ownsConnection(connectionId: string): Promise<boolean> {
+    return [...this.connections.values()].some((connection) => connection.id === connectionId);
+  }
 }
-
 class MemoryRunLogStore implements IRunLogStore {
   readonly items: RunLog[] = [];
   addError?: Error;
-
-  async add(run: RunLog): Promise<{ retentionApplied: boolean }> {
+  async add(run: RunLog): Promise<{
+    retentionApplied: boolean;
+  }> {
     if (this.addError) throw this.addError;
     this.items.push(run);
     return { retentionApplied: true };
@@ -478,8 +502,10 @@ type TestLogEntry = {
   fields: Record<string, unknown>;
   message: string;
 };
-
-function createTestLogger(): { entries: TestLogEntry[]; logger: Logger } {
+function createTestLogger(): {
+  entries: TestLogEntry[];
+  logger: Logger;
+} {
   const entries: TestLogEntry[] = [];
   const record = (fields: Record<string, unknown>, message: string): void => {
     entries.push({ fields, message });

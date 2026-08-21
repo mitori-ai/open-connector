@@ -19,7 +19,6 @@ import type { ITenantCredentialStore, TenantAdminCredentialRecord, TenantRecord 
 import type { PoolClient } from "pg";
 
 import { Pool } from "pg";
-import { compatibilityTenantId } from "../../core/tenant.ts";
 import { parseRuntimeActionHttpResult } from "../api/runtime-api.ts";
 import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
 import { assertPostgresSchemaReady } from "./postgres-migrations.ts";
@@ -182,11 +181,7 @@ class PostgresConnectionStore implements IConnectionStore {
     this.secretCodec = secretCodec;
   }
 
-  async get(
-    service: string,
-    connectionName: string,
-    tenantId: TenantId = compatibilityTenantId,
-  ): Promise<StoredConnection | undefined> {
+  async get(service: string, connectionName: string, tenantId: TenantId): Promise<StoredConnection | undefined> {
     const result = await this.pool.query<RuntimeRow>(
       "select id, revision, value from connections where tenant_id = $1 and service = $2 and connection_name = $3",
       [tenantId, service, connectionName],
@@ -207,7 +202,7 @@ class PostgresConnectionStore implements IConnectionStore {
     service: string,
     connectionName: string,
     credential: ResolvedCredential,
-    tenantId: TenantId = compatibilityTenantId,
+    tenantId: TenantId,
   ): Promise<StoredConnection> {
     const result = await this.pool.query<RuntimeRow>(
       `
@@ -239,7 +234,7 @@ class PostgresConnectionStore implements IConnectionStore {
     };
   }
 
-  async updateCredential(input: StoredConnection, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async updateCredential(input: StoredConnection, tenantId: TenantId): Promise<boolean> {
     const result = await this.pool.query(
       `
         update connections
@@ -261,7 +256,7 @@ class PostgresConnectionStore implements IConnectionStore {
     return (result.rowCount ?? 0) > 0;
   }
 
-  async delete(service: string, connectionName: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
+  async delete(service: string, connectionName: string, tenantId: TenantId): Promise<void> {
     await this.pool.query("delete from connections where tenant_id = $1 and service = $2 and connection_name = $3", [
       tenantId,
       service,
@@ -269,7 +264,7 @@ class PostgresConnectionStore implements IConnectionStore {
     ]);
   }
 
-  async list(tenantId: TenantId = compatibilityTenantId): Promise<StoredConnection[]> {
+  async list(tenantId: TenantId): Promise<StoredConnection[]> {
     const result = await this.pool.query<RuntimeRow>(
       "select id, revision, service, connection_name, value from connections where tenant_id = $1 order by service, connection_name",
       [tenantId],
@@ -285,7 +280,7 @@ class PostgresConnectionStore implements IConnectionStore {
     );
   }
 
-  async ownsConnection(connectionId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async ownsConnection(connectionId: string, tenantId: TenantId): Promise<boolean> {
     const result = await this.pool.query("select 1 from connections where tenant_id = $1 and id = $2", [
       tenantId,
       connectionId,
@@ -352,12 +347,7 @@ class PostgresOAuthStateStore implements IOAuthStateStore {
         values ($1, $2, $3, $4)
         on conflict(state) do update set tenant_id = excluded.tenant_id, value = excluded.value, created_at = excluded.created_at
       `,
-      [
-        state.state,
-        state.tenantId ?? compatibilityTenantId,
-        await this.secretCodec.encode(JSON.stringify(state)),
-        state.createdAt,
-      ],
+      [state.state, state.tenantId, await this.secretCodec.encode(JSON.stringify(state)), state.createdAt],
     );
   }
 
@@ -394,7 +384,7 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
       `,
       [
         record.id,
-        record.tenantId ?? compatibilityTenantId,
+        record.tenantId,
         record.name,
         record.tokenHash,
         JSON.stringify(record.allowedActions),
@@ -407,7 +397,7 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
     );
   }
 
-  async list(tenantId: TenantId = compatibilityTenantId): Promise<RuntimeTokenRecord[]> {
+  async list(tenantId: TenantId): Promise<RuntimeTokenRecord[]> {
     const result = await this.pool.query<RuntimeRow>(
       `
       select id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
@@ -433,11 +423,7 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async updatePolicy(
-    id: string,
-    policy: TokenPolicy,
-    tenantId: TenantId = compatibilityTenantId,
-  ): Promise<RuntimeTokenRecord | undefined> {
+  async updatePolicy(id: string, policy: TokenPolicy, tenantId: TenantId): Promise<RuntimeTokenRecord | undefined> {
     const result = await this.pool.query<RuntimeRow>(
       `
         update runtime_tokens
@@ -458,12 +444,12 @@ class PostgresRuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async revoke(id: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async revoke(id: string, tenantId: TenantId): Promise<boolean> {
     const result = await this.pool.query("delete from runtime_tokens where tenant_id = $1 and id = $2", [tenantId, id]);
     return (result.rowCount ?? 0) > 0;
   }
 
-  async markUsed(id: string, usedAt: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
+  async markUsed(id: string, usedAt: string, tenantId: TenantId): Promise<void> {
     await this.pool.query(
       "update runtime_tokens set last_used_at = $1 where tenant_id = $2 and id = $3 and revoked_at is null",
       [usedAt, tenantId, id],
@@ -610,14 +596,7 @@ class PostgresIdempotencyStore implements IIdempotencyStore {
           on conflict(tenant_id, key_hash) do nothing
           returning key_hash
         `,
-        [
-          input.tenantId ?? compatibilityTenantId,
-          input.keyHash,
-          input.claimId,
-          input.requestHash,
-          input.now,
-          input.expiresAt,
-        ],
+        [input.tenantId, input.keyHash, input.claimId, input.requestHash, input.now, input.expiresAt],
       );
       if ((inserted.rowCount ?? 0) > 0) {
         return { kind: "acquired" } as const;
@@ -625,7 +604,7 @@ class PostgresIdempotencyStore implements IIdempotencyStore {
 
       const existing = await client.query<RuntimeRow>(
         "select request_hash, state, response_value from idempotency_records where tenant_id = $1 and key_hash = $2",
-        [input.tenantId ?? compatibilityTenantId, input.keyHash],
+        [input.tenantId, input.keyHash],
       );
       return { kind: "existing", row: existing.rows[0]! } as const;
     });
@@ -662,7 +641,7 @@ class PostgresIdempotencyStore implements IIdempotencyStore {
       [
         await this.secretCodec.encode(JSON.stringify(input.response)),
         input.expiresAt,
-        input.tenantId ?? compatibilityTenantId,
+        input.tenantId,
         input.keyHash,
         input.claimId,
         input.requestHash,
@@ -681,7 +660,7 @@ class PostgresRunLogStore implements IRunLogStore {
     this.limit = limit;
   }
 
-  async add(run: RunLog, tenantId: TenantId = compatibilityTenantId): Promise<RunLogWriteResult> {
+  async add(run: RunLog, tenantId: TenantId): Promise<RunLogWriteResult> {
     await this.pool.query(
       `
         insert into runs (id, tenant_id, service, action_id, caller, started_at, completed_at, ok, value)
@@ -727,7 +706,7 @@ class PostgresRunLogStore implements IRunLogStore {
     }
   }
 
-  async get(id: string, tenantId: TenantId = compatibilityTenantId): Promise<RunLog | undefined> {
+  async get(id: string, tenantId: TenantId): Promise<RunLog | undefined> {
     const result = await this.pool.query<RuntimeRow>(
       "select service, value from runs where tenant_id = $1 and id = $2",
       [tenantId, id],
@@ -736,7 +715,7 @@ class PostgresRunLogStore implements IRunLogStore {
     return row ? readRunLogRow(row) : undefined;
   }
 
-  async list(input: RunLogListInput = {}, tenantId: TenantId = compatibilityTenantId): Promise<RunLogPage> {
+  async list(input: RunLogListInput, tenantId: TenantId): Promise<RunLogPage> {
     const limit = Math.max(1, Math.min(input.limit ?? this.limit, this.limit));
     const cursor = decodeRunLogCursor(input.cursor);
     const conditions: string[] = ["tenant_id = $1"];

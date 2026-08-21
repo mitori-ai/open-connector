@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { parseTenantId } from "../../core/tenant.ts";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { AesGcmSecretCodec } from "../secrets/secret-codec.ts";
 import { assertPostgresSchemaReady, migratePostgresDatabase } from "./postgres-migrations.ts";
 import { PostgresRuntimeDatabase } from "./postgres-runtime-store.ts";
@@ -79,10 +80,7 @@ describe("PostgreSQL migrations with PGlite", () => {
       await pool.query(`
         create table runtime_migrations (name text primary key, applied_at timestamptz not null);
         ${readFileSync(new URL("../../../migrations/postgresql/0010_runtime.sql", import.meta.url), "utf8")}
-        ${readFileSync(
-          new URL("../../../migrations/postgresql/0011_runtime_token_connection_scope.sql", import.meta.url),
-          "utf8",
-        )}
+        ${readFileSync(new URL("../../../migrations/postgresql/0011_runtime_token_connection_scope.sql", import.meta.url), "utf8")}
       `);
       await pool.query(
         "insert into runtime_migrations (name, applied_at) values ('0010_runtime.sql', now()), ('0011_runtime_token_connection_scope.sql', now())",
@@ -144,9 +142,13 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     await testServer.server.stop();
     await testServer.database.close();
   });
-
   it("persists connections and OAuth data across database instances", async () => {
-    const connection = await database.connectionStore.set("github", "default", githubCredential("github-token"));
+    const connection = await database.connectionStore.set(
+      "github",
+      "default",
+      githubCredential("github-token"),
+      compatibilityTenantId,
+    );
     await database.oauthClientConfigStore.set({
       service: "gmail",
       clientId: "client-id",
@@ -159,11 +161,12 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
       service: "gmail",
       state: "state-1",
       createdAt: "2026-06-30T00:00:00.000Z",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
     });
     await database.close();
-
     database = await PostgresRuntimeDatabase.open(testServer.url);
-    await expect(database.connectionStore.get("github", "default")).resolves.toMatchObject({
+    await expect(database.connectionStore.get("github", "default", compatibilityTenantId)).resolves.toMatchObject({
       id: connection.id,
       credential: { apiKey: "github-token" },
     });
@@ -175,38 +178,55 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     await expect(database.oauthStateStore.take("state-1")).resolves.toMatchObject({ state: "state-1" });
     await expect(database.oauthStateStore.take("state-1")).resolves.toBeUndefined();
   });
-
   it("preserves connection identity and rejects stale revisions", async () => {
-    const created = await database.connectionStore.set("github", "default", githubCredential("github-token"));
-    const updated = await database.connectionStore.set("github", "default", githubCredential("updated-token"));
-
+    const created = await database.connectionStore.set(
+      "github",
+      "default",
+      githubCredential("github-token"),
+      compatibilityTenantId,
+    );
+    const updated = await database.connectionStore.set(
+      "github",
+      "default",
+      githubCredential("updated-token"),
+      compatibilityTenantId,
+    );
     expect(updated.id).toBe(created.id);
     expect(updated.revision).not.toBe(created.revision);
     await expect(
-      database.connectionStore.updateCredential({
-        ...created,
-        credential: githubCredential("stale-token"),
-      }),
+      database.connectionStore.updateCredential(
+        {
+          ...created,
+          credential: githubCredential("stale-token"),
+        },
+        compatibilityTenantId,
+      ),
     ).resolves.toBe(false);
     await expect(
-      database.connectionStore.updateCredential({
-        ...updated,
-        credential: githubCredential("refreshed-token"),
-      }),
+      database.connectionStore.updateCredential(
+        {
+          ...updated,
+          credential: githubCredential("refreshed-token"),
+        },
+        compatibilityTenantId,
+      ),
     ).resolves.toBe(true);
     await expect(
-      database.connectionStore.updateCredential({
-        ...updated,
-        credential: githubCredential("second-stale-token"),
-      }),
+      database.connectionStore.updateCredential(
+        {
+          ...updated,
+          credential: githubCredential("second-stale-token"),
+        },
+        compatibilityTenantId,
+      ),
     ).resolves.toBe(false);
-    await expect(database.connectionStore.get("github", "default")).resolves.toMatchObject({
+    await expect(database.connectionStore.get("github", "default", compatibilityTenantId)).resolves.toMatchObject({
       credential: { apiKey: "refreshed-token" },
     });
   });
-
   it("claims, completes, replays, and expires idempotency records", async () => {
     const first = {
+      tenantId: compatibilityTenantId,
       keyHash: "key-hash",
       requestHash: "request-hash",
       claimId: "claim-1",
@@ -220,67 +240,95 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
       expiresAt: "2026-06-30T02:00:00.000Z",
     };
     const response = successResponse({ claim: "current" });
-
     await expect(database.idempotencyStore.claim(first)).resolves.toEqual({ kind: "acquired" });
-    await expect(database.idempotencyStore.claim({ ...first, claimId: "duplicate" })).resolves.toEqual({
+    await expect(
+      database.idempotencyStore.claim({ ...first, claimId: "duplicate", tenantId: compatibilityTenantId }),
+    ).resolves.toEqual({
       kind: "in_progress",
     });
     await expect(
-      database.idempotencyStore.claim({ ...first, claimId: "conflict", requestHash: "different" }),
+      database.idempotencyStore.claim({
+        ...first,
+        claimId: "conflict",
+        requestHash: "different",
+        tenantId: compatibilityTenantId,
+      }),
     ).resolves.toEqual({ kind: "conflict" });
     await expect(database.idempotencyStore.claim(second)).resolves.toEqual({ kind: "acquired" });
     await expect(
       database.idempotencyStore.complete({
         ...first,
         response: successResponse({ claim: "stale" }),
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toBe(false);
-    await expect(database.idempotencyStore.complete({ ...second, response })).resolves.toBe(true);
+    await expect(
+      database.idempotencyStore.complete({ ...second, response, tenantId: compatibilityTenantId }),
+    ).resolves.toBe(true);
     await expect(
       database.idempotencyStore.claim({
         ...second,
         claimId: "claim-3",
         now: "2026-06-30T01:30:00.000Z",
+        tenantId: compatibilityTenantId,
       }),
     ).resolves.toEqual({ kind: "completed", response });
   });
-
   it("stores tokens and policy and filters paginated run logs", async () => {
-    const tokens = new RuntimeTokenService(database.runtimeTokenStore);
-    const token = await tokens.createToken("Claude Desktop", {
-      allowedActions: ["github.*"],
-      blockedActions: ["github.delete_repository"],
-      allowedProxies: ["github"],
-      allowedConnections: ["connection-work", "connection-personal"],
-    });
+    const workConnection = await database.connectionStore.set(
+      "github",
+      "work",
+      githubCredential("work-token"),
+      compatibilityTenantId,
+    );
+    const personalConnection = await database.connectionStore.set(
+      "github",
+      "personal",
+      githubCredential("personal-token"),
+      compatibilityTenantId,
+    );
+    const tokens = new RuntimeTokenService(database.runtimeTokenStore, database.connectionStore);
+    const token = await tokens.createToken(
+      "Claude Desktop",
+      {
+        allowedActions: ["github.*"],
+        blockedActions: ["github.delete_repository"],
+        allowedProxies: ["github"],
+        allowedConnections: [workConnection.id, personalConnection.id],
+      },
+      compatibilityTenantId,
+    );
     await expect(tokens.verifyToken(token.token)).resolves.toBe(true);
     await expect(tokens.resolveToken(token.token)).resolves.toMatchObject({
-      allowedConnections: ["connection-work", "connection-personal"],
+      allowedConnections: [workConnection.id, personalConnection.id],
     });
-    await expect(tokens.listTokens()).resolves.toMatchObject([
+    await expect(tokens.listTokens(compatibilityTenantId)).resolves.toMatchObject([
       {
         id: token.record.id,
         allowedActions: ["github.*"],
         blockedActions: ["github.delete_repository"],
         allowedProxies: ["github"],
-        allowedConnections: ["connection-work", "connection-personal"],
+        allowedConnections: [workConnection.id, personalConnection.id],
       },
     ]);
     await expect(
-      tokens.updateTokenPolicy(token.record.id, {
-        allowedActions: ["github.get_current_user"],
-        blockedActions: [],
-        allowedProxies: [],
-        allowedConnections: ["connection-work"],
-      }),
+      tokens.updateTokenPolicy(
+        token.record.id,
+        {
+          allowedActions: ["github.get_current_user"],
+          blockedActions: [],
+          allowedProxies: [],
+          allowedConnections: [workConnection.id],
+        },
+        compatibilityTenantId,
+      ),
     ).resolves.toMatchObject({
       allowedActions: ["github.get_current_user"],
-      allowedConnections: ["connection-work"],
+      allowedConnections: [workConnection.id],
     });
     await expect(tokens.resolveToken(token.token)).resolves.toMatchObject({
-      allowedConnections: ["connection-work"],
+      allowedConnections: [workConnection.id],
     });
-
     const policy = {
       rules: {
         allowedActions: ["github.*"],
@@ -292,29 +340,32 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     };
     await database.runtimePolicyStore.set(policy);
     await expect(database.runtimePolicyStore.get()).resolves.toEqual(policy);
-
-    await database.runLogStore.add(createRun("gmail-1", "2026-06-30T00:00:00.000Z", "gmail.list", "gmail"));
-    await database.runLogStore.add(createRun("news-1", "2026-06-30T00:00:01.000Z"));
-    await database.runLogStore.add(createRun("gmail-2", "2026-06-30T00:00:02.000Z", "gmail.send", "gmail"));
-    const first = await database.runLogStore.list({ service: "gmail", limit: 1 });
+    await database.runLogStore.add(
+      createRun("gmail-1", "2026-06-30T00:00:00.000Z", "gmail.list", "gmail"),
+      compatibilityTenantId,
+    );
+    await database.runLogStore.add(createRun("news-1", "2026-06-30T00:00:01.000Z"), compatibilityTenantId);
+    await database.runLogStore.add(
+      createRun("gmail-2", "2026-06-30T00:00:02.000Z", "gmail.send", "gmail"),
+      compatibilityTenantId,
+    );
+    const first = await database.runLogStore.list({ service: "gmail", limit: 1 }, compatibilityTenantId);
     expect(first.items.map((run) => run.id)).toEqual(["gmail-2"]);
     expect(first.nextCursor).toBeTruthy();
     await expect(
-      database.runLogStore.list({ service: "gmail", limit: 1, cursor: first.nextCursor }),
+      database.runLogStore.list({ service: "gmail", limit: 1, cursor: first.nextCursor }, compatibilityTenantId),
     ).resolves.toMatchObject({ items: [{ id: "gmail-1" }] });
-    await expect(database.runLogStore.get("news-1")).resolves.toMatchObject({ id: "news-1" });
-    await expect(tokens.revokeToken(token.record.id)).resolves.toBe(true);
+    await expect(database.runLogStore.get("news-1", compatibilityTenantId)).resolves.toMatchObject({ id: "news-1" });
+    await expect(tokens.revokeToken(token.record.id, compatibilityTenantId)).resolves.toBe(true);
     await expect(tokens.verifyToken(token.token)).resolves.toBe(false);
   });
-
   it("keeps only the configured number of recent runs", async () => {
     await database.close();
     database = await PostgresRuntimeDatabase.open(testServer.url, { runLimit: 2 });
-    await database.runLogStore.add(createRun("run-1", "2026-06-30T00:00:00.000Z"));
-    await database.runLogStore.add(createRun("run-2", "2026-06-30T00:00:01.000Z"));
-    await database.runLogStore.add(createRun("run-3", "2026-06-30T00:00:02.000Z"));
-
-    await expect(database.runLogStore.list()).resolves.toMatchObject({
+    await database.runLogStore.add(createRun("run-1", "2026-06-30T00:00:00.000Z"), compatibilityTenantId);
+    await database.runLogStore.add(createRun("run-2", "2026-06-30T00:00:01.000Z"), compatibilityTenantId);
+    await database.runLogStore.add(createRun("run-3", "2026-06-30T00:00:02.000Z"), compatibilityTenantId);
+    await expect(database.runLogStore.list({}, compatibilityTenantId)).resolves.toMatchObject({
       items: [{ id: "run-3" }, { id: "run-2" }],
     });
   });
@@ -328,7 +379,7 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     await tenants.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
     await tenants.createTenant({ id: tenantB, displayName: "Tenant B", createdAt: new Date().toISOString() });
     await tenants.issueAdminCredential(tenantA, "Tenant A admin");
-    await database.connectionStore.set("github", "default", githubCredential("github-token"));
+    await database.connectionStore.set("github", "default", githubCredential("github-token"), compatibilityTenantId);
     await database.connectionStore.set("github", "shared-alias", githubCredential("tenant-a-token"), tenantA);
     await database.connectionStore.set("github", "shared-alias", githubCredential("tenant-b-token"), tenantB);
     await database.oauthClientConfigStore.set({
@@ -342,8 +393,11 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
       service: "gmail",
       state: "state-rotation",
       createdAt: "2026-06-30T00:00:00.000Z",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
     });
     const claim = {
+      tenantId: compatibilityTenantId,
       keyHash: "key-hash",
       requestHash: "request-hash",
       claimId: "claim-1",
@@ -351,7 +405,11 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
       expiresAt: "2026-07-01T00:00:00.000Z",
     };
     await database.idempotencyStore.claim(claim);
-    await database.idempotencyStore.complete({ ...claim, response: successResponse({ secret: "response" }) });
+    await database.idempotencyStore.complete({
+      ...claim,
+      response: successResponse({ secret: "response" }),
+      tenantId: compatibilityTenantId,
+    });
     for (const [tenantId, secret] of [
       [tenantA, "tenant-a-response"],
       [tenantB, "tenant-b-response"],
@@ -370,14 +428,13 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     const withOldKey = await PostgresRuntimeDatabase.open(testServer.url, {
       secretCodec: new AesGcmSecretCodec("old-key"),
     });
-    await expect(withOldKey.connectionStore.get("github", "default")).rejects.toThrow();
+    await expect(withOldKey.connectionStore.get("github", "default", compatibilityTenantId)).rejects.toThrow();
     await withOldKey.close();
-
     database = await PostgresRuntimeDatabase.open(testServer.url, {
       secretCodec: new AesGcmSecretCodec("new-key"),
     });
     const reopenedTenants = new TenantCredentialService(database.tenantCredentialStore);
-    await expect(database.connectionStore.get("github", "default")).resolves.toMatchObject({
+    await expect(database.connectionStore.get("github", "default", compatibilityTenantId)).resolves.toMatchObject({
       credential: { apiKey: "github-token" },
     });
     await expect(database.connectionStore.get("github", "shared-alias", tenantA)).resolves.toMatchObject({
@@ -392,7 +449,9 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     await expect(database.oauthStateStore.take("state-rotation")).resolves.toMatchObject({
       state: "state-rotation",
     });
-    await expect(database.idempotencyStore.claim({ ...claim, claimId: "claim-2" })).resolves.toEqual({
+    await expect(
+      database.idempotencyStore.claim({ ...claim, claimId: "claim-2", tenantId: compatibilityTenantId }),
+    ).resolves.toEqual({
       kind: "completed",
       response: successResponse({ secret: "response" }),
     });
@@ -402,9 +461,8 @@ describe("PostgresRuntimeDatabase with PGlite", () => {
     await expect(
       database.idempotencyStore.claim({ ...claim, tenantId: tenantB, claimId: "tenant-b-replay" }),
     ).resolves.toEqual({ kind: "completed", response: successResponse({ secret: "tenant-b-response" }) });
-
     await database.resetRuntimeData();
-    await expect(database.connectionStore.list()).resolves.toEqual([]);
+    await expect(database.connectionStore.list(compatibilityTenantId)).resolves.toEqual([]);
     await expect(reopenedTenants.listTenants()).resolves.toMatchObject([{ id: "local" }]);
     await expect(reopenedTenants.hasAdminCredentials()).resolves.toBe(false);
     const pool = new Pool({ connectionString: testServer.url, max: 1 });
