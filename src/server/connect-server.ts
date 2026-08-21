@@ -57,6 +57,7 @@ import {
   serializeRuntimeConnectedApp,
   serializeRuntimeFailure,
   serializeRuntimeProvider,
+  serializeRuntimePrincipal,
   unknownActionFailure,
   writeRuntimeActionHttpResult,
   writeRuntimeFailure,
@@ -145,6 +146,7 @@ export class ConnectServer {
     }
     app.use("*", createLocalAuthMiddleware(auth));
     app.get("/v1/health", (context) => writeRuntimeSuccess(context, { ok: true, runtime: "oomol-connect" }));
+    app.get("/v1/principal", (context) => this.getRuntimePrincipal(context));
     app.get("/v1/providers", (context) => this.listRuntimeProviders(context));
     app.get("/v1/actions", (context) => this.listRuntimeActions(context));
     app.get("/v1/actions/search", (context) => this.searchRuntimeActions(context));
@@ -1209,6 +1211,23 @@ export class ConnectServer {
     return context.json({ tenantId: principal.tenantId, capability: principal.capability });
   }
 
+  private async getRuntimePrincipal(context: Context): Promise<Response> {
+    if (hasTenantSelector(context) || (await hasRequestBody(context))) {
+      return jsonError(context, 400, "invalid_input", "This endpoint does not accept tenant selectors or a body.");
+    }
+    const principal = readAuthenticatedPrincipal(context);
+    if (principal?.kind !== "tenant" || principal.capability !== "runtime") {
+      return jsonError(context, 401, "unauthorized", "A runtime bearer token is required.");
+    }
+    const isNonSharedCompatibilityPrincipal =
+      !this.options.auth?.sharedRuntime &&
+      (principal.runtimeTokenId === "bootstrap" || principal.runtimeTokenId === "local-open");
+    if (!readRuntimeGrant(context) && !isNonSharedCompatibilityPrincipal) {
+      return jsonError(context, 401, "unauthorized", "A persistent tenant runtime credential is required.");
+    }
+    return context.json(serializeRuntimePrincipal(principal));
+  }
+
   private async listTenants(context: Context): Promise<Response> {
     return context.json(await this.requireTenantCredentials().listTenants());
   }
@@ -1299,6 +1318,25 @@ export class ConnectServer {
       throw new Error("Runtime policy is unavailable.");
     }
   }
+}
+
+function hasTenantSelector(context: Context): boolean {
+  const isTenantSelector = (name: string): boolean =>
+    ["tenantid", "xtenantid", "xootenantid", "xoomoltenantid"].includes(
+      name.toLowerCase().replaceAll("-", "").replaceAll("_", ""),
+    );
+  return (
+    [...new URL(context.req.url).searchParams.keys()].some(isTenantSelector) ||
+    [...context.req.raw.headers.keys()].some(isTenantSelector)
+  );
+}
+
+async function hasRequestBody(context: Context): Promise<boolean> {
+  const contentLength = context.req.header("content-length")?.trim();
+  if ((contentLength !== undefined && contentLength !== "0") || context.req.header("transfer-encoding") !== undefined) {
+    return true;
+  }
+  return context.req.raw.body !== null && (await context.req.raw.clone().arrayBuffer()).byteLength > 0;
 }
 
 function readOAuthClientConfigInput(body: Record<string, unknown>): OAuthClientConfigInput | undefined {

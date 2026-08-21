@@ -149,6 +149,37 @@ describe("action execution OpenAPI", () => {
     );
   });
 
+  it("documents runtime principal introspection without tenant selectors or secret fields", () => {
+    const document = createOpenApiDocument([provider]);
+    const path = document.paths["/v1/principal"] as {
+      get: { description: string; parameters?: unknown[]; requestBody?: unknown; responses: Record<string, unknown> };
+    };
+    const schema = document.components.schemas.RuntimePrincipal as {
+      required: string[];
+      properties: Record<string, unknown>;
+      additionalProperties?: boolean;
+    };
+
+    expect(path.get.parameters).toBeUndefined();
+    expect(path.get.requestBody).toBeUndefined();
+    expect(path.get.description).toContain("persistent tenant runtime token");
+    expect(path.get.description).toContain("JWT principals are not introspectable");
+    expect(path.get.responses).toHaveProperty("200");
+    expect(path.get.responses).toHaveProperty("400");
+    expect(path.get.responses).toHaveProperty("401");
+    expect(schema.required).toEqual(["kind", "tenantId", "capability", "credentialId"]);
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.properties).toEqual({
+      kind: { type: "string", enum: ["tenant"] },
+      tenantId: { type: "string", description: "Bearer-derived immutable tenant identifier." },
+      capability: { type: "string", enum: ["runtime"] },
+      credentialId: {
+        type: "string",
+        description: "Stable identifier of the authenticated runtime credential.",
+      },
+    });
+  });
+
   it("documents Runtime and token policy management and run audit metadata", () => {
     const document = createOpenApiDocument([provider]);
     const runtimePolicyPath = document.paths["/api/runtime-policy"] as {

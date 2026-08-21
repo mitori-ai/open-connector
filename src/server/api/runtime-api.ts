@@ -1,5 +1,6 @@
 import type { RuntimeActionDefinition } from "../../catalog-store.ts";
 import type { ConnectionError, ConnectionSummary } from "../../connection-service.ts";
+import type { TenantRuntimePrincipal } from "../../core/tenant.ts";
 import type { ExecutionResult, ProviderDefinition } from "../../core/types.ts";
 import type { Context } from "hono";
 
@@ -72,6 +73,13 @@ export interface RuntimeConnectedApp {
   scopes: string[];
 }
 
+export interface RuntimePrincipalMetadata {
+  kind: "tenant";
+  tenantId: string;
+  capability: "runtime";
+  credentialId: string;
+}
+
 export interface RuntimeFailureInput {
   status: RuntimeStatus;
   errorCode: string;
@@ -108,6 +116,16 @@ export function serializeRuntimeProvider(provider: ProviderDefinition): RuntimeP
 
 export function serializeRuntimeActionService(service: string): RuntimeActionService {
   return { service };
+}
+
+/** Expose only the stable identity facts derived from runtime bearer authentication. */
+export function serializeRuntimePrincipal(principal: TenantRuntimePrincipal): RuntimePrincipalMetadata {
+  return {
+    kind: principal.kind,
+    tenantId: principal.tenantId,
+    capability: principal.capability,
+    credentialId: principal.runtimeTokenId,
+  };
 }
 
 export function serializeRuntimeAction(action: RuntimeActionDefinition): RuntimeActionMetadata {

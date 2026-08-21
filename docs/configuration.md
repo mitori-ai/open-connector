@@ -77,6 +77,11 @@ routes closed. Tenant identity comes only from the tenant-admin credential, a pe
 token, or a validated JWT tenant claim. Request headers, aliases, request bodies, OAuth return URLs,
 and action input never select a tenant.
 
+Control Center startup can validate its persistent runtime token with `GET /v1/principal`. The
+response identifies the bearer-derived tenant and stable credential ID without exposing grants or
+secrets. The endpoint rejects tenant selectors and request bodies, does not introspect JWT-derived
+principals, and does not allow operator or tenant-admin credentials onto the customer runtime plane.
+
 ## Runtime database
 
 The Node runtime uses `OOMOL_CONNECT_DATA_DIR/connect.sqlite` by default and applies SQLite
