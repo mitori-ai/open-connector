@@ -26,7 +26,7 @@ export type IdempotencyKeyResult = { ok: true; key: string | undefined } | { ok:
 
 /** Action request semantics covered by one idempotency-key fingerprint. */
 export interface ActionRequestFingerprintInput {
-  tenantId?: TenantId;
+  tenantId: TenantId;
   actionId: string;
   connectionName: string;
   input: unknown;

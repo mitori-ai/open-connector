@@ -10,7 +10,6 @@ import type { IRunLogStore, RunLog, RunLogCaller, RunLogListInput, RunLogPage } 
 
 import { ConnectionError } from "../../connection-service.ts";
 import { executeAction as executeProviderAction } from "../../core/execution.ts";
-import { compatibilityTenantId } from "../../core/tenant.ts";
 import { safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
 
 export interface ActionRunnerOptions {
@@ -24,7 +23,7 @@ export interface ActionRunnerOptions {
 }
 
 export interface RunActionInput {
-  tenantId?: TenantId;
+  tenantId: TenantId;
   actionId: string;
   input: unknown;
   caller: RunLogCaller;
@@ -52,7 +51,7 @@ export class ActionRunner {
   }
 
   async run(input: RunActionInput): Promise<ActionRunResult | undefined> {
-    const tenantId = input.tenantId ?? compatibilityTenantId;
+    const tenantId = input.tenantId;
     const action = this.options.catalog.actionsById.get(input.actionId);
     if (!action) {
       this.options.logger?.warn(
@@ -195,7 +194,7 @@ export class ActionRunner {
   }
 
   listRuns(tenantId: TenantId, input?: RunLogListInput): Promise<RunLogPage> {
-    return this.options.runs.list(input, tenantId);
+    return this.options.runs.list(input ?? {}, tenantId);
   }
 
   getRun(tenantId: TenantId, id: string): Promise<RunLog | undefined> {

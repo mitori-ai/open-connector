@@ -11,15 +11,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { S3TransitFileService } from "./s3-transit-files.ts";
-
 describe("S3TransitFileService", () => {
   it("shares transit files across service instances", async () => {
     const storage = new MemoryS3();
     const first = createService(storage.client);
     const second = createService(storage.client);
-
-    const upload = await first.create(new File(["hello transit"], "report.TXT", { type: "text/plain" }));
+    const upload = await first.create(
+      new File(["hello transit"], "report.TXT", { type: "text/plain" }),
+      compatibilityTenantId,
+    );
     expect(upload.fileId).toMatch(/^[a-f0-9]{32}\.txt$/);
     expect(upload.downloadUrl).toBe(`http://localhost:3000/api/files/${upload.fileId}`);
     expect(upload).toMatchObject({
@@ -28,40 +30,40 @@ describe("S3TransitFileService", () => {
       mimeType: "text/plain",
     });
     expect([...storage.objects.keys()]).toEqual([`transit/${upload.fileId}`]);
-
-    const read = await second.read(upload.fileId);
+    const read = await second.read(upload.fileId, compatibilityTenantId);
     expect(read).toMatchObject({
       sizeBytes: 13,
       name: "report.TXT",
       mimeType: "text/plain",
     });
     await expect(read.file.text()).resolves.toBe("hello transit");
-
-    const response = await second.response(upload.fileId);
+    const response = await second.response(upload.fileId, compatibilityTenantId);
     expect(response.headers.get("content-length")).toBe("13");
     expect(response.headers.get("content-type")).toBe("text/plain");
     await expect(response.text()).resolves.toBe("hello transit");
-
-    await expect(second.delete(upload.fileId)).resolves.toBe(true);
-    await expect(first.delete(upload.fileId)).resolves.toBe(false);
-    await expect(first.read(upload.fileId)).rejects.toMatchObject({ status: 404, code: "file_not_found" });
+    await expect(second.delete(upload.fileId, compatibilityTenantId)).resolves.toBe(true);
+    await expect(first.delete(upload.fileId, compatibilityTenantId)).resolves.toBe(false);
+    await expect(first.read(upload.fileId, compatibilityTenantId)).rejects.toMatchObject({
+      status: 404,
+      code: "file_not_found",
+    });
   });
-
   it("streams a staged file into S3 with its known content length", async () => {
     const storage = new MemoryS3();
     const service = createService(storage.client);
     const root = await mkdtemp(join(tmpdir(), "connect-s3-transit-"));
     const path = join(root, "upload.tmp");
     await writeFile(path, "staged payload");
-
     try {
-      const upload = await service.createFromPath({
-        path,
-        sizeBytes: 14,
-        name: "report.txt",
-        mimeType: "text/plain",
-      });
-
+      const upload = await service.createFromPath(
+        {
+          path,
+          sizeBytes: 14,
+          name: "report.txt",
+          mimeType: "text/plain",
+        },
+        compatibilityTenantId,
+      );
       const objectPut = storage.send.mock.calls
         .map(([command]) => command)
         .find((command) => command instanceof PutObjectCommand && command.input.Key === `transit/${upload.fileId}`);
@@ -71,7 +73,9 @@ describe("S3TransitFileService", () => {
       }
       expect(objectPut.input.Body).toBeInstanceOf(Readable);
       expect(objectPut.input.ContentLength).toBe(14);
-      await expect(service.read(upload.fileId).then((stored) => stored.file.text())).resolves.toBe("staged payload");
+      await expect(
+        service.read(upload.fileId, compatibilityTenantId).then((stored) => stored.file.text()),
+      ).resolves.toBe("staged payload");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -80,8 +84,7 @@ describe("S3TransitFileService", () => {
   it("rejects files over the configured limit", async () => {
     const storage = new MemoryS3();
     const service = createService(storage.client, { maxBytes: 4 });
-
-    await expect(service.create(new File(["12345"], "large.bin"))).rejects.toMatchObject({
+    await expect(service.create(new File(["12345"], "large.bin"), compatibilityTenantId)).rejects.toMatchObject({
       status: 413,
       code: "file_too_large",
     });
@@ -91,34 +94,45 @@ describe("S3TransitFileService", () => {
   it("deletes expired files when they are read", async () => {
     const storage = new MemoryS3();
     const service = createService(storage.client, { ttlSeconds: -1 });
-    const upload = await service.create(new File(["old"], "old.txt"));
-
-    await expect(service.read(upload.fileId)).rejects.toMatchObject({ status: 404, code: "file_not_found" });
+    const upload = await service.create(new File(["old"], "old.txt"), compatibilityTenantId);
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toMatchObject({
+      status: 404,
+      code: "file_not_found",
+    });
     expect(storage.objects.size).toBe(0);
   });
-
   it("stores and restores a Unicode file name from S3 object metadata", async () => {
     const storage = new MemoryS3();
     const service = createService(storage.client);
-    const upload = await service.create(new File(["invoice"], "发票.pdf", { type: "application/pdf" }));
-
+    const upload = await service.create(
+      new File(["invoice"], "发票.pdf", { type: "application/pdf" }),
+      compatibilityTenantId,
+    );
     expect(storage.objects.size).toBe(1);
-    await expect(service.read(upload.fileId).then((stored) => stored.name)).resolves.toBe("发票.pdf");
+    await expect(service.read(upload.fileId, compatibilityTenantId).then((stored) => stored.name)).resolves.toBe(
+      "发票.pdf",
+    );
   });
-
   it("rejects malformed file ids without touching S3", async () => {
     const storage = new MemoryS3();
     const service = createService(storage.client);
-
-    await expect(service.read("../secret")).rejects.toMatchObject({ status: 404, code: "file_not_found" });
-    await expect(service.delete("transit/evil")).rejects.toMatchObject({ status: 404, code: "file_not_found" });
+    await expect(service.read("../secret", compatibilityTenantId)).rejects.toMatchObject({
+      status: 404,
+      code: "file_not_found",
+    });
+    await expect(service.delete("transit/evil", compatibilityTenantId)).rejects.toMatchObject({
+      status: 404,
+      code: "file_not_found",
+    });
     expect(storage.send).not.toHaveBeenCalled();
   });
 });
-
 function createService(
   client: S3Client,
-  options: { ttlSeconds?: number; maxBytes?: number } = {},
+  options: {
+    ttlSeconds?: number;
+    maxBytes?: number;
+  } = {},
 ): S3TransitFileService {
   return new S3TransitFileService({
     client,

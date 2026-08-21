@@ -231,6 +231,7 @@ export class ConnectServer {
       this.revokeRuntimeToken(context, context.req.param("id")),
     );
     app.post("/api/tenant/oauth/authorizations", (context) => this.createOAuthAuthorization(context));
+    app.post("/api/tenant/oauth/completions", (context) => this.completeTenantOAuth(context));
 
     app.get("/api/operator/tenants", (context) => this.listTenants(context));
     app.post("/api/operator/tenants", (context) => this.createTenant(context));
@@ -974,6 +975,13 @@ export class ConnectServer {
         "service",
         (message) => new OAuthFlowError("invalid_input", message),
       );
+      const sessionCorrelation = optionalString(body.sessionCorrelation);
+      if (this.options.auth?.sharedRuntime && !sessionCorrelation) {
+        throw new OAuthFlowError("invalid_input", "sessionCorrelation is required in shared mode.");
+      }
+      if (this.options.auth?.sharedRuntime && !returnUrl) {
+        throw new OAuthFlowError("invalid_input", "returnUrl is required in shared mode.");
+      }
       const logContext = { path: context.req.path, service, connectionName };
       this.options.logger?.info(logContext, "oauth authorization started");
 
@@ -981,6 +989,7 @@ export class ConnectServer {
         tenantId: this.tenantId(context),
         service,
         connectionName,
+        sessionCorrelation: sessionCorrelation ?? crypto.randomUUID(),
         returnUrl,
         clientConfig: readOAuthClientConfigInput(body),
       });
@@ -1096,6 +1105,9 @@ export class ConnectServer {
     if (!state) {
       return jsonError(context, 400, "invalid_oauth_callback", "OAuth callback requires state and code.");
     }
+    if (!/^[A-Za-z0-9_-]{1,128}$/u.test(state)) {
+      return jsonError(context, 400, "invalid_oauth_state", "OAuth state is invalid.");
+    }
     if (providerError || !code) {
       try {
         const pending = await this.options.oauthFlow.consumeAuthorizationState(state);
@@ -1135,7 +1147,15 @@ export class ConnectServer {
     }
 
     try {
-      const result = await this.options.oauthFlow.completeAuthorization({ state, code });
+      if (this.options.auth?.sharedRuntime) {
+        const staged = await this.options.oauthFlow.stageAuthorization(state, code);
+        const returnUrl = staged.returnUrl
+          ? appendOAuthCompletion(staged.returnUrl, staged.completionCapability)
+          : undefined;
+        this.options.logger?.info({ ...logContext, service: staged.service }, "oauth callback staged");
+        return context.html(renderOAuthCompletionPage(staged.service, { ok: true, returnUrl }));
+      }
+      const result = await this.options.oauthFlow.completeLocalAuthorization(state, code);
       this.options.logger?.info({ ...logContext, service: result.service }, "oauth callback completed");
       return context.html(renderOAuthCompletionPage(result.service, { ok: true, returnUrl: result.returnUrl }));
     } catch (error) {
@@ -1150,6 +1170,31 @@ export class ConnectServer {
             }),
           );
         }
+        return jsonError(context, error.code === "unknown_service" ? 404 : 400, error.code, error.message);
+      }
+      throw error;
+    }
+  }
+
+  private async completeTenantOAuth(context: Context): Promise<Response> {
+    const body = await readJsonBody(context);
+    try {
+      const result = await this.options.oauthFlow.completeAuthorization({
+        completionCapability: requiredString(
+          body.completionCapability,
+          "completionCapability",
+          (message) => new OAuthFlowError("invalid_input", message),
+        ),
+        sessionCorrelation: requiredString(
+          body.sessionCorrelation,
+          "sessionCorrelation",
+          (message) => new OAuthFlowError("invalid_input", message),
+        ),
+        tenantId: this.tenantId(context),
+      });
+      return context.json(result);
+    } catch (error) {
+      if (error instanceof OAuthFlowError || error instanceof ConnectionError) {
         return jsonError(context, error.code === "unknown_service" ? 404 : 400, error.code, error.message);
       }
       throw error;
@@ -1281,7 +1326,11 @@ export class ConnectServer {
 
   private tenantId(context: Context): TenantId {
     const principal = readAuthenticatedPrincipal(context);
-    return principal?.kind === "tenant" ? principal.tenantId : compatibilityTenantId;
+    if (principal?.kind === "tenant") return principal.tenantId;
+    if (this.options.auth?.sharedRuntime) {
+      throw new HttpRequestError("tenant_principal_required", "A tenant principal is required.", 401);
+    }
+    return compatibilityTenantId;
   }
 
   private requireTenantCredentials(): TenantCredentialService {
@@ -1318,6 +1367,12 @@ export class ConnectServer {
       throw new Error("Runtime policy is unavailable.");
     }
   }
+}
+
+function appendOAuthCompletion(returnUrl: string, completionCapability: string): string {
+  const url = new URL(returnUrl);
+  url.searchParams.set("oauthCompletion", completionCapability);
+  return url.toString();
 }
 
 function hasTenantSelector(context: Context): boolean {

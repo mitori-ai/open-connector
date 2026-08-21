@@ -3,7 +3,7 @@ import type { RuntimeActionHttpResult } from "../api/runtime-api.ts";
 
 /** Values required to atomically claim one runtime-wide idempotency key. */
 export interface IdempotencyClaimInput {
-  tenantId?: TenantId;
+  tenantId: TenantId;
   keyHash: string;
   requestHash: string;
   claimId: string;
@@ -20,7 +20,7 @@ export type IdempotencyClaimResult =
 
 /** Values required to persist the response owned by a successful claim. */
 export interface CompleteIdempotencyInput {
-  tenantId?: TenantId;
+  tenantId: TenantId;
   keyHash: string;
   requestHash: string;
   claimId: string;

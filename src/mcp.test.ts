@@ -10,9 +10,9 @@ import { describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "./catalog-store.ts";
 import { ConnectionService } from "./connection-service.ts";
 import { ActionPolicyService, emptyPolicyRules } from "./core/action-policy.ts";
+import { compatibilityTenantId } from "./core/tenant.ts";
 import { createMcpServer } from "./mcp.ts";
 import { ActionRunner } from "./server/actions/action-runner.ts";
-
 const echoAction: ActionDefinition = {
   id: "example.echo",
   service: "example",
@@ -501,6 +501,7 @@ describe("MCP server", () => {
         getPolicySnapshot: async () => policy,
         runtimeGrant: {
           tokenId: "token-1",
+          tenantId: compatibilityTenantId,
           allowedActions: ["example.*"],
           blockedActions: ["example.echo"],
           allowedProxies: [],
@@ -526,19 +527,31 @@ describe("MCP server", () => {
           ok: true,
           data: [{ connectionName: "secondary" }],
         });
-        expect((connections.structuredContent as { data: unknown[] }).data).toHaveLength(1);
+        expect(
+          (
+            connections.structuredContent as {
+              data: unknown[];
+            }
+          ).data,
+        ).toHaveLength(1);
         expect(JSON.stringify(connections.structuredContent)).not.toContain("Default Account");
-
         const apps = await client.callTool({ name: "list_apps", arguments: {} });
         expect(apps.structuredContent).toMatchObject({
           ok: true,
           data: [{ service: "example_auth" }],
         });
         expect(
-          (apps.structuredContent as { data: Array<{ connection?: { connectionName?: string } }> }).data[0]?.connection,
+          (
+            apps.structuredContent as {
+              data: Array<{
+                connection?: {
+                  connectionName?: string;
+                };
+              }>;
+            }
+          ).data[0]?.connection,
         ).toBeUndefined();
         expect(JSON.stringify(apps.structuredContent)).not.toContain("Default Account");
-
         const omittedGuide = await client.callTool({
           name: "get_action_guide",
           arguments: { actionId: "example_auth.get_account" },
@@ -605,6 +618,7 @@ describe("MCP server", () => {
         getPolicySnapshot: async () => policy,
         runtimeGrant: {
           tokenId: "token-1",
+          tenantId: compatibilityTenantId,
           allowedActions: [],
           blockedActions: [],
           allowedProxies: [],
@@ -621,6 +635,7 @@ async function withMcpClient(
     getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
     runtimeGrant?: {
       tokenId: string;
+      tenantId: typeof compatibilityTenantId;
       allowedActions: string[];
       blockedActions: string[];
       allowedProxies: string[];
@@ -650,6 +665,7 @@ async function withMcpClient(
     connections,
     actions,
     ...policy,
+    tenantId: compatibilityTenantId,
   });
   const client = new Client({ name: "mcp-test", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -670,6 +686,7 @@ async function withAuthenticatedMcpClient(
     getPolicySnapshot?(): Promise<ActionPolicySnapshot>;
     runtimeGrant?: {
       tokenId: string;
+      tenantId: typeof compatibilityTenantId;
       allowedActions: string[];
       blockedActions: string[];
       allowedProxies: string[];
@@ -702,10 +719,16 @@ async function withAuthenticatedMcpClient(
     ]),
   });
   const actions = new ActionRunner({ catalog, providerLoader, connections, runs });
-  const server = createMcpServer({ catalog, providerLoader, connections, actions, ...policy });
+  const server = createMcpServer({
+    catalog,
+    providerLoader,
+    connections,
+    actions,
+    ...policy,
+    tenantId: compatibilityTenantId,
+  });
   const client = new Client({ name: "mcp-test", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   try {
@@ -779,16 +802,18 @@ class MemoryConnectionStore implements IConnectionStore {
   async list(): Promise<StoredConnection[]> {
     return [...this.connections.values()];
   }
-
+  async ownsConnection(connectionId: string): Promise<boolean> {
+    return [...this.connections.values()].some((connection) => connection.id === connectionId);
+  }
   private key(service: string, connectionName: string): string {
     return `${service}:${connectionName}`;
   }
 }
-
 class MemoryRunLogStore implements IRunLogStore {
   readonly runs: RunLog[] = [];
-
-  async add(run: RunLog): Promise<{ retentionApplied: boolean }> {
+  async add(run: RunLog): Promise<{
+    retentionApplied: boolean;
+  }> {
     this.runs.push(run);
     return { retentionApplied: true };
   }

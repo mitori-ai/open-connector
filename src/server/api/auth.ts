@@ -334,12 +334,12 @@ async function resolveRuntimePrincipal(
     return undefined;
   }
   const grant = await options.resolveRuntimeToken?.(token);
-  if (grant && (await isTenantActive(options, grant.tenantId ?? compatibilityTenantId))) {
+  if (grant && (await isTenantActive(options, grant.tenantId))) {
     runtimeGrants.set(context.req.raw, grant);
     return {
       kind: "tenant",
       capability: "runtime",
-      tenantId: grant.tenantId ?? compatibilityTenantId,
+      tenantId: grant.tenantId,
       runtimeTokenId: grant.tokenId,
     };
   }

@@ -19,7 +19,6 @@ import type { ITenantCredentialStore, TenantAdminCredentialRecord, TenantRecord 
 
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { compatibilityTenantId } from "../../core/tenant.ts";
 import { parseRuntimeActionHttpResult } from "../api/runtime-api.ts";
 import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
 import { DEFAULT_RUN_LIMIT, decodeRunLogCursor, encodeRunLogCursor } from "./runtime-store.ts";
@@ -150,11 +149,7 @@ export class SqliteConnectionStore implements IConnectionStore {
     this.secretCodec = secretCodec;
   }
 
-  async get(
-    service: string,
-    connectionName: string,
-    tenantId: TenantId = compatibilityTenantId,
-  ): Promise<StoredConnection | undefined> {
+  async get(service: string, connectionName: string, tenantId: TenantId): Promise<StoredConnection | undefined> {
     const row = this.database
       .prepare(
         "select id, revision, value from connections where tenant_id = ? and service = ? and connection_name = ?",
@@ -175,7 +170,7 @@ export class SqliteConnectionStore implements IConnectionStore {
     service: string,
     connectionName: string,
     credential: ResolvedCredential,
-    tenantId: TenantId = compatibilityTenantId,
+    tenantId: TenantId,
   ): Promise<StoredConnection> {
     const row = this.database
       .prepare(
@@ -207,7 +202,7 @@ export class SqliteConnectionStore implements IConnectionStore {
     };
   }
 
-  async updateCredential(input: StoredConnection, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async updateCredential(input: StoredConnection, tenantId: TenantId): Promise<boolean> {
     const row = this.database
       .prepare(
         `
@@ -230,13 +225,13 @@ export class SqliteConnectionStore implements IConnectionStore {
     return row !== undefined;
   }
 
-  async delete(service: string, connectionName: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
+  async delete(service: string, connectionName: string, tenantId: TenantId): Promise<void> {
     this.database
       .prepare("delete from connections where tenant_id = ? and service = ? and connection_name = ?")
       .run(tenantId, service, connectionName);
   }
 
-  async list(tenantId: TenantId = compatibilityTenantId): Promise<StoredConnection[]> {
+  async list(tenantId: TenantId): Promise<StoredConnection[]> {
     const rows = this.database
       .prepare(
         "select id, revision, service, connection_name, value from connections where tenant_id = ? order by service, connection_name",
@@ -253,7 +248,7 @@ export class SqliteConnectionStore implements IConnectionStore {
     );
   }
 
-  async ownsConnection(connectionId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async ownsConnection(connectionId: string, tenantId: TenantId): Promise<boolean> {
     return Boolean(
       this.database.prepare("select 1 from connections where tenant_id = ? and id = ?").get(tenantId, connectionId),
     );
@@ -318,12 +313,7 @@ export class SqliteOAuthStateStore implements IOAuthStateStore {
         on conflict(state) do update set tenant_id = excluded.tenant_id, value = excluded.value, created_at = excluded.created_at
       `,
       )
-      .run(
-        state.state,
-        state.tenantId ?? compatibilityTenantId,
-        await this.secretCodec.encode(JSON.stringify(state)),
-        state.createdAt,
-      );
+      .run(state.state, state.tenantId, await this.secretCodec.encode(JSON.stringify(state)), state.createdAt);
   }
 
   async take(state: string): Promise<OAuthAuthorizationState | undefined> {
@@ -358,7 +348,7 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
       )
       .run(
         record.id,
-        record.tenantId ?? compatibilityTenantId,
+        record.tenantId,
         record.name,
         record.tokenHash,
         JSON.stringify(record.allowedActions),
@@ -370,7 +360,7 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
       );
   }
 
-  async list(tenantId: TenantId = compatibilityTenantId): Promise<RuntimeTokenRecord[]> {
+  async list(tenantId: TenantId): Promise<RuntimeTokenRecord[]> {
     return this.database
       .prepare(
         `
@@ -397,11 +387,7 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async updatePolicy(
-    id: string,
-    policy: TokenPolicy,
-    tenantId: TenantId = compatibilityTenantId,
-  ): Promise<RuntimeTokenRecord | undefined> {
+  async updatePolicy(id: string, policy: TokenPolicy, tenantId: TenantId): Promise<RuntimeTokenRecord | undefined> {
     const row = this.database
       .prepare(
         `
@@ -422,12 +408,12 @@ export class SqliteRuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async revoke(id: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+  async revoke(id: string, tenantId: TenantId): Promise<boolean> {
     const result = this.database.prepare("delete from runtime_tokens where tenant_id = ? and id = ?").run(tenantId, id);
     return result.changes > 0;
   }
 
-  async markUsed(id: string, usedAt: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
+  async markUsed(id: string, usedAt: string, tenantId: TenantId): Promise<void> {
     this.database
       .prepare("update runtime_tokens set last_used_at = ? where tenant_id = ? and id = ? and revoked_at is null")
       .run(usedAt, tenantId, id);
@@ -612,14 +598,7 @@ export class SqliteIdempotencyStore implements IIdempotencyStore {
           on conflict(tenant_id, key_hash) do nothing
         `,
         )
-        .run(
-          input.tenantId ?? compatibilityTenantId,
-          input.keyHash,
-          input.claimId,
-          input.requestHash,
-          input.now,
-          input.expiresAt,
-        );
+        .run(input.tenantId, input.keyHash, input.claimId, input.requestHash, input.now, input.expiresAt);
 
       if (inserted.changes > 0) {
         return { kind: "acquired" } as const;
@@ -633,7 +612,7 @@ export class SqliteIdempotencyStore implements IIdempotencyStore {
           where tenant_id = ? and key_hash = ?
         `,
         )
-        .get(input.tenantId ?? compatibilityTenantId, input.keyHash) as RuntimeRow;
+        .get(input.tenantId, input.keyHash) as RuntimeRow;
       return { kind: "existing", row } as const;
     });
 
@@ -669,14 +648,7 @@ export class SqliteIdempotencyStore implements IIdempotencyStore {
           and state = 'in_progress'
       `,
       )
-      .run(
-        responseValue,
-        input.expiresAt,
-        input.tenantId ?? compatibilityTenantId,
-        input.keyHash,
-        input.claimId,
-        input.requestHash,
-      );
+      .run(responseValue, input.expiresAt, input.tenantId, input.keyHash, input.claimId, input.requestHash);
     return result.changes > 0;
   }
 }
@@ -690,7 +662,7 @@ export class SqliteRunLogStore implements IRunLogStore {
     this.limit = limit;
   }
 
-  async add(run: RunLog, tenantId: TenantId = compatibilityTenantId): Promise<RunLogWriteResult> {
+  async add(run: RunLog, tenantId: TenantId): Promise<RunLogWriteResult> {
     insertRun(this.database, tenantId, run);
 
     try {
@@ -712,14 +684,14 @@ export class SqliteRunLogStore implements IRunLogStore {
     }
   }
 
-  async get(id: string, tenantId: TenantId = compatibilityTenantId): Promise<RunLog | undefined> {
+  async get(id: string, tenantId: TenantId): Promise<RunLog | undefined> {
     const row = this.database
       .prepare("select service, value from runs where tenant_id = ? and id = ?")
       .get(tenantId, id);
     return row ? readRunLogRow(row) : undefined;
   }
 
-  async list(input: RunLogListInput = {}, tenantId: TenantId = compatibilityTenantId): Promise<RunLogPage> {
+  async list(input: RunLogListInput, tenantId: TenantId): Promise<RunLogPage> {
     const limit = Math.max(1, Math.min(input.limit ?? this.limit, this.limit));
     const cursor = decodeRunLogCursor(input.cursor);
     const conditions: string[] = ["tenant_id = ?"];

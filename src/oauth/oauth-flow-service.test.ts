@@ -8,11 +8,11 @@ import type { IOAuthStateStore, OAuthAuthorizationState } from "./oauth-flow-ser
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCatalogStore } from "../catalog-store.ts";
 import { ConnectionService } from "../connection-service.ts";
+import { compatibilityTenantId, parseTenantId } from "../core/tenant.ts";
 import { provider as slackProvider } from "../providers/slack/definition.ts";
-import { AesGcmSecretCodec } from "../server/secrets/secret-codec.ts";
+import { AesGcmSecretCodec, PlainTextSecretCodec } from "../server/secrets/secret-codec.ts";
 import { OAuthClientConfigService } from "./oauth-client-config-service.ts";
 import { OAuthFlowService } from "./oauth-flow-service.ts";
-
 const oauthProvider: ProviderDefinition = {
   service: "example",
   displayName: "Example",
@@ -188,10 +188,13 @@ describe("OAuthFlowService", () => {
         tenant: "default",
       },
     });
-
-    const started = await services.flow.startAuthorization({ service: "example", connectionName: "work" });
+    const started = await services.flow.startAuthorization({
+      service: "example",
+      connectionName: "work",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
     const authorizationUrl = new URL(started.authorizationUrl);
-
     expect(authorizationUrl.origin).toBe("https://example.com");
     expect(authorizationUrl.searchParams.get("client_id")).toBe("client-id");
     expect(authorizationUrl.searchParams.get("redirect_uri")).toBe("http://localhost:3000/oauth/callback");
@@ -212,16 +215,22 @@ describe("OAuthFlowService", () => {
       extra: { tenant: "default" },
       requestedScopes: ["read"],
     });
-
-    const started = await services.flow.startAuthorization({ service: "example" });
-
+    const started = await services.flow.startAuthorization({
+      service: "example",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
     expect(new URL(started.authorizationUrl).searchParams.get("scope")).toBe("read");
   });
-
   it("requires OAuth client config before authorization", async () => {
     const services = createServices([oauthProvider]);
-
-    await expect(services.flow.startAuthorization({ service: "example" })).rejects.toMatchObject({
+    await expect(
+      services.flow.startAuthorization({
+        service: "example",
+        tenantId: compatibilityTenantId,
+        sessionCorrelation: "test-session-correlation",
+      }),
+    ).rejects.toMatchObject({
       code: "oauth_client_config_required",
     });
   });
@@ -245,6 +254,8 @@ describe("OAuthFlowService", () => {
         requestedScopes: ["read"],
         extra: { tenant: "tenant-a" },
       },
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
     });
     expect(new URL(started.authorizationUrl).searchParams.get("app_id")).toBe("custom-client-id");
     expect(new URL(started.authorizationUrl).searchParams.get("scope")).toBe("read");
@@ -265,9 +276,13 @@ describe("OAuthFlowService", () => {
         requestedScopes: ["read"],
         extra: { tenant: "tenant-a" },
       },
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
     });
-    await services.flow.completeAuthorization({ state: second.state, code: "code" });
-    await expect(services.connections.getCredential("custom_oauth", "tenant-a")).resolves.toMatchObject({
+    await services.flow.completeLocalAuthorization(second.state, "code");
+    await expect(
+      services.connections.getCredential("custom_oauth", "tenant-a", compatibilityTenantId),
+    ).resolves.toMatchObject({
       metadata: {
         oauthClientConfig: {
           clientId: "custom-client-id",
@@ -289,6 +304,8 @@ describe("OAuthFlowService", () => {
       services.flow.startAuthorization({
         service: "custom_oauth",
         clientConfig: { clientId: "client-id", clientSecret: "client-secret", extra: { tenant: "tenant" } },
+        tenantId: compatibilityTenantId,
+        sessionCorrelation: "test-session-correlation",
       }),
     ).rejects.toMatchObject({
       code: "oauth_custom_app_not_allowed",
@@ -317,10 +334,12 @@ describe("OAuthFlowService", () => {
       clientId: "client-id",
       clientSecret: "client-secret",
     });
-
-    const started = await services.flow.startAuthorization({ service: "override_oauth" });
+    const started = await services.flow.startAuthorization({
+      service: "override_oauth",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
     const authorizationUrl = new URL(started.authorizationUrl);
-
     expect(authorizationUrl.searchParams.get("client_id")).toBe("client-id");
     expect(authorizationUrl.searchParams.get("redirect_uri")).toBe("http://localhost:3000/oauth/callback");
     expect(authorizationUrl.searchParams.get("state")).toBe(started.state);
@@ -341,20 +360,82 @@ describe("OAuthFlowService", () => {
       "fetch",
       vi.fn(async () => Response.json({ access_token: "access-token", token_type: "Bearer" })),
     );
-
-    const started = await services.flow.startAuthorization({ service: "example", connectionName: "work" });
-    await expect(services.flow.completeAuthorization({ state: started.state, code: "code" })).resolves.toEqual({
+    const started = await services.flow.startAuthorization({
+      service: "example",
+      connectionName: "work",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
+    await expect(services.flow.completeLocalAuthorization(started.state, "code")).resolves.toEqual({
       service: "example",
       connected: true,
     });
-
-    await expect(services.connections.getCredential("example", "work")).resolves.toMatchObject({
+    await expect(services.connections.getCredential("example", "work", compatibilityTenantId)).resolves.toMatchObject({
       authType: "oauth2",
       accessToken: "access-token",
     });
-    await expect(services.connections.getCredential("example")).resolves.toBeUndefined();
+    await expect(
+      services.connections.getCredential("example", undefined, compatibilityTenantId),
+    ).resolves.toBeUndefined();
   });
+  it("requires the initiating tenant and Control Center session before staged completion", async () => {
+    const tenantA = parseTenantId("tenant-a");
+    const tenantB = parseTenantId("tenant-b");
+    const services = createServices([oauthProvider], {
+      secretCodec: new AesGcmSecretCodec("oauth-completion-test-key"),
+    });
+    await services.clientConfigs.upsertConfig({
+      service: "example",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      extra: { tenant: "default" },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ access_token: "tenant-a-token", token_type: "Bearer" })),
+    );
+    const started = await services.flow.startAuthorization({
+      tenantId: tenantA,
+      service: "example",
+      connectionName: "work",
+      sessionCorrelation: "control-center-session-a",
+      returnUrl: "https://control-center.example.test/oauth/complete",
+    });
+    const staged = await services.flow.stageAuthorization(started.state, "provider-code");
 
+    await expect(
+      services.flow.completeAuthorization({
+        tenantId: tenantB,
+        sessionCorrelation: "control-center-session-a",
+        completionCapability: staged.completionCapability,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_oauth_session" });
+    await expect(
+      services.flow.completeAuthorization({
+        tenantId: tenantA,
+        sessionCorrelation: "control-center-session-b",
+        completionCapability: staged.completionCapability,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_oauth_session" });
+    await expect(
+      services.flow.completeAuthorization({
+        tenantId: tenantA,
+        sessionCorrelation: "control-center-session-a",
+        completionCapability: staged.completionCapability,
+      }),
+    ).resolves.toMatchObject({ service: "example", connected: true });
+    await expect(
+      services.flow.completeAuthorization({
+        tenantId: tenantA,
+        sessionCorrelation: "control-center-session-a",
+        completionCapability: staged.completionCapability,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_oauth_state" });
+    await expect(services.connections.getCredential("example", "work", tenantA)).resolves.toMatchObject({
+      authType: "oauth2",
+      accessToken: "tenant-a-token",
+    });
+  });
   it("stores Slack's user grant outside token metadata", async () => {
     const services = createServices([{ ...slackProvider, actions: [] }]);
     await services.clientConfigs.upsertConfig({
@@ -370,23 +451,25 @@ describe("OAuthFlowService", () => {
           access_token: "bot-access",
           refresh_token: "bot-refresh",
           token_type: "bot",
-          expires_in: 43_200,
+          expires_in: 43200,
           scope: "channels:read,chat:write",
           authed_user: {
             access_token: "user-access",
             refresh_token: "user-refresh",
             token_type: "user",
-            expires_in: 43_200,
+            expires_in: 43200,
             scope: "search:read",
           },
         }),
       ),
     );
-
-    const started = await services.flow.startAuthorization({ service: "slack" });
-    await services.flow.completeAuthorization({ state: started.state, code: "code" });
-
-    const credential = await services.connections.getCredential("slack");
+    const started = await services.flow.startAuthorization({
+      service: "slack",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
+    await services.flow.completeLocalAuthorization(started.state, "code");
+    const credential = await services.connections.getCredential("slack", undefined, compatibilityTenantId);
     expect(credential).toMatchObject({
       authType: "oauth2",
       accessToken: "bot-access",
@@ -414,10 +497,13 @@ describe("OAuthFlowService", () => {
     });
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const started = await services.flow.startAuthorization({ service: "example" });
+    const started = await services.flow.startAuthorization({
+      service: "example",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
     vi.setSystemTime(new Date("2026-01-01T00:00:00.002Z"));
-
-    await expect(services.flow.completeAuthorization({ state: started.state, code: "code" })).rejects.toMatchObject({
+    await expect(services.flow.completeLocalAuthorization(started.state, "code")).rejects.toMatchObject({
       code: "invalid_oauth_state",
       message: "OAuth state is missing or expired.",
     });
@@ -437,9 +523,10 @@ describe("OAuthFlowService", () => {
       service: "example",
       state: "bad-created-at",
       createdAt: "not-a-date",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
     });
-
-    await expect(services.flow.completeAuthorization({ state: "bad-created-at", code: "code" })).rejects.toMatchObject({
+    await expect(services.flow.completeLocalAuthorization("bad-created-at", "code")).rejects.toMatchObject({
       code: "invalid_oauth_state",
       message: "OAuth state is missing or expired.",
     });
@@ -459,9 +546,12 @@ describe("OAuthFlowService", () => {
       "fetch",
       vi.fn(async () => new Response("x".repeat(1024 * 1024 + 1))),
     );
-
-    const started = await services.flow.startAuthorization({ service: "example" });
-    await expect(services.flow.completeAuthorization({ state: started.state, code: "code" })).rejects.toThrow(
+    const started = await services.flow.startAuthorization({
+      service: "example",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
+    await expect(services.flow.completeLocalAuthorization(started.state, "code")).rejects.toThrow(
       "OAuth token response exceeds 1048576 bytes",
     );
   });
@@ -480,11 +570,13 @@ describe("OAuthFlowService", () => {
       "fetch",
       vi.fn(async () => Response.json({ access_token: "access-token", token_type: "Bearer" })),
     );
-
-    const started = await services.flow.startAuthorization({ service: "pkce" });
-    await services.flow.completeAuthorization({ state: started.state, code: "code" });
-
-    await expect(services.connections.getCredential("pkce")).resolves.toMatchObject({
+    const started = await services.flow.startAuthorization({
+      service: "pkce",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
+    await services.flow.completeLocalAuthorization(started.state, "code");
+    await expect(services.connections.getCredential("pkce", undefined, compatibilityTenantId)).resolves.toMatchObject({
       authType: "oauth2",
       metadata: {
         oauthClientSecretExtra: {
@@ -505,14 +597,15 @@ describe("OAuthFlowService", () => {
       Response.json({ access_token: "access-token", token_type: "Bearer" }),
     );
     vi.stubGlobal("fetch", fetcher);
-
-    const started = await services.flow.startAuthorization({ service: "pkce" });
+    const started = await services.flow.startAuthorization({
+      service: "pkce",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
     const authorizationUrl = new URL(started.authorizationUrl);
-
     expect(authorizationUrl.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
-    await services.flow.completeAuthorization({ state: started.state, code: "code" });
-
+    await services.flow.completeLocalAuthorization(started.state, "code");
     const tokenRequest = fetcher.mock.calls[0]?.[1] as RequestInit | undefined;
     const tokenBody = tokenRequest?.body;
     expect(tokenRequest?.headers).toMatchObject({
@@ -536,14 +629,17 @@ describe("OAuthFlowService", () => {
       "fetch",
       vi.fn(async () => Response.json({ token: "intercom-token" })),
     );
-
-    const started = await services.flow.startAuthorization({ service: "example", connectionName: "work" });
-    await expect(services.flow.completeAuthorization({ state: started.state, code: "code" })).resolves.toEqual({
+    const started = await services.flow.startAuthorization({
+      service: "example",
+      connectionName: "work",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
+    await expect(services.flow.completeLocalAuthorization(started.state, "code")).resolves.toEqual({
       service: "example",
       connected: true,
     });
-
-    await expect(services.connections.getCredential("example", "work")).resolves.toMatchObject({
+    await expect(services.connections.getCredential("example", "work", compatibilityTenantId)).resolves.toMatchObject({
       authType: "oauth2",
       accessToken: "intercom-token",
     });
@@ -571,17 +667,18 @@ describe("OAuthFlowService", () => {
       }),
     );
     vi.stubGlobal("fetch", fetcher);
-
-    const started = await services.flow.startAuthorization({ service: "custom_oauth" });
+    const started = await services.flow.startAuthorization({
+      service: "custom_oauth",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
     const authorizationUrl = new URL(started.authorizationUrl);
-
     expect(authorizationUrl.toString()).toContain("https://example.com/common/authorize");
     expect(authorizationUrl.searchParams.get("app_id")).toBe("client-id");
     expect(authorizationUrl.searchParams.has("client_id")).toBe(false);
     expect(authorizationUrl.searchParams.has("response_type")).toBe(false);
     expect(authorizationUrl.searchParams.get("scope")).toBe("read,write");
-
-    await services.flow.completeAuthorization({ state: started.state, code: "code" });
+    await services.flow.completeLocalAuthorization(started.state, "code");
     const tokenRequest = fetcher.mock.calls[0];
     expect(tokenRequest?.[0]).toBe("https://example.com/common/token");
     expect(JSON.parse(String(tokenRequest?.[1]?.body))).toEqual({
@@ -590,7 +687,9 @@ describe("OAuthFlowService", () => {
       secret: "client-secret",
       state: started.state,
     });
-    await expect(services.connections.getCredential("custom_oauth")).resolves.toMatchObject({
+    await expect(
+      services.connections.getCredential("custom_oauth", undefined, compatibilityTenantId),
+    ).resolves.toMatchObject({
       authType: "oauth2",
       accessToken: "custom-access-token",
       refreshToken: "custom-refresh-token",
@@ -601,7 +700,7 @@ describe("OAuthFlowService", () => {
         posthog_base_url: "https://eu.posthog.com",
       },
     });
-    const credential = await services.connections.getCredential("custom_oauth");
+    const credential = await services.connections.getCredential("custom_oauth", undefined, compatibilityTenantId);
     expect(credential?.authType).toBe("oauth2");
     if (credential?.authType === "oauth2") {
       expect(credential.metadata).not.toHaveProperty("access_token");
@@ -627,16 +726,17 @@ describe("OAuthFlowService", () => {
       "fetch",
       vi.fn(async () => Response.json({ access_token: "access-token", token_type: "Bearer" })),
     );
-
-    const started = await services.flow.startAuthorization({ service: "base_url_oauth" });
+    const started = await services.flow.startAuthorization({
+      service: "base_url_oauth",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+    });
     expect(new URL(started.authorizationUrl).toString()).toContain(
       "https://tenant.example.com/oauth/tenant%2Fa/authorize",
     );
-
-    await services.flow.completeAuthorization({ state: started.state, code: "code" });
+    await services.flow.completeLocalAuthorization(started.state, "code");
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("https://tenant.example.com/oauth/tenant%2Fa/token");
   });
-
   it("rejects OAuth endpoint config values that resolve to local network targets", async () => {
     const services = createServices([baseUrlOAuthProvider]);
     await services.clientConfigs.upsertConfig({
@@ -648,8 +748,13 @@ describe("OAuthFlowService", () => {
         tenant: "tenant",
       },
     });
-
-    await expect(services.flow.startAuthorization({ service: "base_url_oauth" })).rejects.toSatisfy(
+    await expect(
+      services.flow.startAuthorization({
+        service: "base_url_oauth",
+        tenantId: compatibilityTenantId,
+        sessionCorrelation: "test-session-correlation",
+      }),
+    ).rejects.toSatisfy(
       (error: unknown) =>
         error instanceof Error &&
         "code" in error &&
@@ -695,7 +800,7 @@ function createServices(
       connections,
       states,
       stateMaxAgeMs: options.stateMaxAgeMs,
-      secretCodec: options.secretCodec,
+      secretCodec: options.secretCodec ?? new PlainTextSecretCodec(),
       isCustomClientConfigAllowed: (service) =>
         options.allowedCustomOAuth?.includes("*") || options.allowedCustomOAuth?.includes(service) || false,
     }),
@@ -752,8 +857,10 @@ class MemoryConnectionStore implements IConnectionStore {
   async list(): Promise<StoredConnection[]> {
     return [...this.store.values()];
   }
+  async ownsConnection(connectionId: string): Promise<boolean> {
+    return [...this.store.values()].some((connection) => connection.id === connectionId);
+  }
 }
-
 function createConnectionKey(service: string, connectionName: string): string {
   return `${service}:${connectionName}`;
 }

@@ -36,6 +36,7 @@ import { createCatalogStore } from "../catalog-store.ts";
 import { ConnectionService } from "../connection-service.ts";
 import { ActionPolicyService as LocalActionPolicyService } from "../core/action-policy.ts";
 import { buildActionSearchIndex } from "../core/action-search.ts";
+import { compatibilityTenantId } from "../core/tenant.ts";
 import { OAuthClientConfigService } from "../oauth/oauth-client-config-service.ts";
 import { OAuthFlowService } from "../oauth/oauth-flow-service.ts";
 import { actionInputMaxDepth, hashActionRequest, hashIdempotencyKey } from "./actions/action-idempotency.ts";
@@ -43,10 +44,9 @@ import { ActionRunner } from "./actions/action-runner.ts";
 import { registerStaticRoutes } from "./api/static-routes.ts";
 import { ConnectServer } from "./connect-server.ts";
 import { TransitFileService } from "./files/transit-files.ts";
-import { AesGcmSecretCodec } from "./secrets/secret-codec.ts";
+import { AesGcmSecretCodec, PlainTextSecretCodec } from "./secrets/secret-codec.ts";
 import { decodeRunLogCursor, encodeRunLogCursor } from "./storage/runtime-store.ts";
 import { RuntimeTokenService } from "./storage/runtime-token-service.ts";
-
 const apiKeyProvider: ProviderDefinition = {
   service: "example",
   displayName: "Example",
@@ -188,9 +188,11 @@ describe("ConnectServer", () => {
         secretExtra: { appBearerToken: "connection-app-token" },
       }),
     });
-
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { authorizationUrl: string; state: string };
+    const body = (await response.json()) as {
+      authorizationUrl: string;
+      state: string;
+    };
     const authorizationUrl = new URL(body.authorizationUrl);
     expect(authorizationUrl.searchParams.get("client_id")).toBe("connection-client-id");
     expect(authorizationUrl.searchParams.get("scope")).toBe("read");
@@ -327,8 +329,9 @@ describe("ConnectServer", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ service: "oauth_example" }),
     });
-    const body = (await authorization.json()) as { authorizationUrl: string };
-
+    const body = (await authorization.json()) as {
+      authorizationUrl: string;
+    };
     expect(authorization.status).toBe(200);
     expect(new URL(body.authorizationUrl).searchParams.get("scope")).toBe("read");
   });
@@ -602,10 +605,9 @@ describe("ConnectServer", () => {
     });
     expect(adminActionRun.status).toBe(404);
   });
-
   it("accepts JWT access tokens alongside existing runtime tokens", async () => {
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
-    const storedToken = await runtimeTokens.createToken("Stored client");
+    const runtimeTokens = createRuntimeTokens();
+    const storedToken = await runtimeTokens.createToken("Stored client", undefined, compatibilityTenantId);
     const verifyRuntimeJwt = vi.fn(async (token: string) => token === "jwt-access-token");
     const app = createTestServer([apiKeyProvider], {
       auth: {
@@ -1121,13 +1123,12 @@ describe("ConnectServer", () => {
       await rm(staticRoot, { recursive: true, force: true });
     }
   });
-
   it("documents provider proxy requests in OpenAPI", async () => {
     const app = createTestServer([apiKeyProvider]).createApp();
-
     const response = await app.request("/openapi.json");
-    const document = (await response.json()) as { paths: Record<string, unknown> };
-
+    const document = (await response.json()) as {
+      paths: Record<string, unknown>;
+    };
     expect(document.paths["/v1/proxy/{service}"]).toMatchObject({
       post: {
         summary: "Proxy one provider API request.",
@@ -1141,19 +1142,36 @@ describe("ConnectServer", () => {
       paths: Record<
         string,
         {
-          get?: { parameters?: Array<{ name: string }> };
+          get?: {
+            parameters?: Array<{
+              name: string;
+            }>;
+          };
           post?: {
             responses?: Record<
               string,
-              { content?: { "application/json"?: { schema?: { properties?: Record<string, unknown> } } } }
+              {
+                content?: {
+                  "application/json"?: {
+                    schema?: {
+                      properties?: Record<string, unknown>;
+                    };
+                  };
+                };
+              }
             >;
           };
         }
       >;
       components: {
         schemas: {
-          ConnectionSummary: { properties: Record<string, unknown>; required: string[] };
-          RunLog: { properties: Record<string, unknown> };
+          ConnectionSummary: {
+            properties: Record<string, unknown>;
+            required: string[];
+          };
+          RunLog: {
+            properties: Record<string, unknown>;
+          };
         };
       };
     };
@@ -1285,7 +1303,9 @@ describe("ConnectServer", () => {
       body: JSON.stringify({ service: "oauth_example" }),
     });
     expect(authorization.status).toBe(200);
-    const { state } = (await authorization.json()) as { state: string };
+    const { state } = (await authorization.json()) as {
+      state: string;
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => Response.json({ access_token: "access-token", token_type: "Bearer" })),
@@ -1411,8 +1431,7 @@ describe("ConnectServer", () => {
       headers: { authorization: "Bearer local-token" },
     });
     const cookie = authorized.headers.get("set-cookie")?.split(";")[0] ?? "";
-
-    now.mockReturnValue(issuedAt + 2_592_000_000 + 1);
+    now.mockReturnValue(issuedAt + 2592000000 + 1);
     const expiredSession = await app.request("/api/auth/session", {
       headers: { cookie },
     });
@@ -1434,9 +1453,8 @@ describe("ConnectServer", () => {
       authenticated: true,
     });
   });
-
   it("does not accept the admin token for stored runtime token access", async () => {
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const app = createTestServer([apiKeyProvider], {
       auth: { adminToken: "local-token" },
       runtimeTokens,
@@ -1456,8 +1474,10 @@ describe("ConnectServer", () => {
       }),
     });
     expect(created.status).toBe(200);
-    const createdBody = (await created.json()) as { token: string; record: RuntimeTokenRecord };
-
+    const createdBody = (await created.json()) as {
+      token: string;
+      record: RuntimeTokenRecord;
+    };
     const adminTokenRuntimeCall = await app.request("/v1/actions", {
       headers: { authorization: "Bearer local-token" },
     });
@@ -1479,14 +1499,11 @@ describe("ConnectServer", () => {
     });
     expect(lowercaseAdminTokenRuntimeCall.status).toBe(401);
   });
-
   it("manages runtime tokens and gates runtime API calls after one is created", async () => {
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const app = createTestServer([apiKeyProvider], { runtimeTokens }).createApp();
-
     const initiallyOpen = await app.request("/v1/actions");
     expect(initiallyOpen.status).toBe(200);
-
     const created = await app.request("/api/runtime-tokens", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1498,7 +1515,10 @@ describe("ConnectServer", () => {
       }),
     });
     expect(created.status).toBe(200);
-    const createdBody = (await created.json()) as { token: string; record: RuntimeTokenRecord };
+    const createdBody = (await created.json()) as {
+      token: string;
+      record: RuntimeTokenRecord;
+    };
     expect(createdBody.token).toMatch(/^oct_/);
     expect(createdBody.record).toMatchObject({
       name: "Claude Desktop",
@@ -1693,9 +1713,8 @@ describe("ConnectServer", () => {
       policy: { allowed: false, checks: [{ source: "runtime", outcome: "block_match" }] },
     });
   });
-
   it("applies stored token action policy and records the token id", async () => {
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const runs = new MemoryRunLogStore();
     const app = createTestServer([{ ...apiKeyProvider, actions: [echoAction] }], {
       runtimeTokens,
@@ -1711,9 +1730,11 @@ describe("ConnectServer", () => {
         blockedActions: ["example.echo"],
       }),
     });
-    const token = (await created.json()) as { token: string; record: RuntimeTokenRecord };
+    const token = (await created.json()) as {
+      token: string;
+      record: RuntimeTokenRecord;
+    };
     expect(token.record.allowedProxies).toEqual([]);
-
     const denied = await app.request("/v1/actions/example.echo", {
       method: "POST",
       headers: { authorization: `Bearer ${token.token}`, "content-type": "application/json" },
@@ -1733,9 +1754,8 @@ describe("ConnectServer", () => {
       ],
     });
   });
-
   it("enforces stored token connection scope on HTTP actions, proxies, and runtime discovery", async () => {
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const app = createTestServer([{ ...apiKeyProvider, actions: [echoAction] }], {
       runtimeTokens,
       providerLoader: new ProxyProviderLoader(),
@@ -1745,7 +1765,9 @@ describe("ConnectServer", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ authType: "api_key", values: { apiKey: "default-key" } }),
     });
-    const defaultConnection = (await defaultConnectionResponse.json()) as { id: string };
+    const defaultConnection = (await defaultConnectionResponse.json()) as {
+      id: string;
+    };
     const workConnectionResponse = await app.request("/api/connections/example", {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -1755,7 +1777,9 @@ describe("ConnectServer", () => {
         values: { apiKey: "work-key" },
       }),
     });
-    const workConnection = (await workConnectionResponse.json()) as { id: string };
+    const workConnection = (await workConnectionResponse.json()) as {
+      id: string;
+    };
     const created = await app.request("/api/runtime-tokens", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1767,9 +1791,10 @@ describe("ConnectServer", () => {
         allowedConnections: [workConnection.id],
       }),
     });
-    const token = (await created.json()) as { token: string };
+    const token = (await created.json()) as {
+      token: string;
+    };
     const authorize = { authorization: `Bearer ${token.token}` };
-
     const omitted = await app.request("/v1/actions/example.echo", {
       method: "POST",
       headers: { ...authorize, "content-type": "application/json" },
@@ -1820,17 +1845,22 @@ describe("ConnectServer", () => {
     expect(omittedProxy.status).toBe(403);
     await expect(omittedProxy.json()).resolves.toMatchObject({ errorCode: "connection_not_allowed" });
     expect(allowedProxy.status).toBe(200);
-
     const apps = await app.request("/v1/apps", { headers: authorize });
     expect(apps.status).toBe(200);
-    const appsBody = (await apps.json()) as { data: Array<{ alias: string }> };
+    const appsBody = (await apps.json()) as {
+      data: Array<{
+        alias: string;
+      }>;
+    };
     expect(appsBody.data.map((app) => app.alias)).toEqual(["work"]);
-
     const byService = await app.request("/v1/apps/services/example", { headers: authorize });
     expect(byService.status).toBe(200);
-    const byServiceBody = (await byService.json()) as { data: Array<{ alias: string }> };
+    const byServiceBody = (await byService.json()) as {
+      data: Array<{
+        alias: string;
+      }>;
+    };
     expect(byServiceBody.data.map((app) => app.alias)).toEqual(["work"]);
-
     const authenticated = await app.request("/v1/apps/authenticated?service=example", { headers: authorize });
     expect(authenticated.status).toBe(200);
     await expect(authenticated.json()).resolves.toMatchObject({ data: ["example"] });
@@ -1848,7 +1878,9 @@ describe("ConnectServer", () => {
     });
     const grantedMissingToken = (await grantedMissingCreated.json()) as {
       token: string;
-      record: { allowedConnections: string[] };
+      record: {
+        allowedConnections: string[];
+      };
     };
     expect(grantedMissingToken.record.allowedConnections).toEqual([workConnection.id, "deleted-connection-id"]);
     const grantedMissing = await app.request("/v1/actions/example.echo", {
@@ -1861,20 +1893,20 @@ describe("ConnectServer", () => {
     });
     expect(grantedMissing.status).toBe(403);
     await expect(grantedMissing.json()).resolves.toMatchObject({ errorCode: "connection_not_allowed" });
-
     const adminConnections = await app.request("/api/connections");
     expect(adminConnections.status).toBe(200);
-    const listed = (await adminConnections.json()) as Array<{ id: string; connectionName: string }>;
+    const listed = (await adminConnections.json()) as Array<{
+      id: string;
+      connectionName: string;
+    }>;
     expect(listed.map((connection) => connection.connectionName).sort()).toEqual(["default", "work"]);
     expect(listed.map((connection) => connection.id).sort()).toEqual([defaultConnection.id, workConnection.id].sort());
-
     const guide = await app.request("/api/actions/example.echo/agent.md");
     expect(guide.status).toBe(200);
     expect(await guide.text()).toContain("## Current Connection");
   });
-
   it("preserves admin, bootstrap, JWT, and unrestricted token connection access", async () => {
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const verifyRuntimeJwt = vi.fn(async (token: string) => token === "jwt-access-token");
     const app = createTestServer([{ ...apiKeyProvider, actions: [echoAction] }], {
       auth: {
@@ -1921,8 +1953,12 @@ describe("ConnectServer", () => {
         allowedConnections: [],
       }),
     });
-    const restrictedToken = (await restricted.json()) as { token: string };
-    const unrestrictedToken = (await unrestricted.json()) as { token: string };
+    const restrictedToken = (await restricted.json()) as {
+      token: string;
+    };
+    const unrestrictedToken = (await unrestricted.json()) as {
+      token: string;
+    };
     const runDefault = async (authorization: string): Promise<number> => {
       const response = await app.request("/v1/actions/example.echo", {
         method: "POST",
@@ -1938,9 +1974,8 @@ describe("ConnectServer", () => {
     expect(await runDefault("Bearer jwt-access-token")).toBe(200);
     expect(await runDefault(`Bearer ${unrestrictedToken.token}`)).toBe(200);
   });
-
   it("rejects token policy updates that omit allowedConnections", async () => {
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const app = createTestServer([apiKeyProvider], { runtimeTokens }).createApp();
     const created = await app.request("/api/runtime-tokens", {
       method: "POST",
@@ -1953,7 +1988,11 @@ describe("ConnectServer", () => {
         allowedConnections: ["connection-id"],
       }),
     });
-    const token = (await created.json()) as { record: { id: string } };
+    const token = (await created.json()) as {
+      record: {
+        id: string;
+      };
+    };
     const omitted = await app.request(`/api/runtime-tokens/${token.record.id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -1965,10 +2004,9 @@ describe("ConnectServer", () => {
     expect(listed.status).toBe(200);
     await expect(listed.json()).resolves.toMatchObject([{ allowedConnections: ["connection-id"] }]);
   });
-
   it("returns an idempotency conflict when different stored tokens reuse one key", async () => {
     let executions = 0;
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const app = createTestServer([{ ...apiKeyProvider, actions: [echoAction] }], {
       runtimeTokens,
       providerLoader: new ActionProviderLoader(async (input, context) => {
@@ -1988,7 +2026,11 @@ describe("ConnectServer", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name }),
       });
-      return ((await response.json()) as { token: string }).token;
+      return (
+        (await response.json()) as {
+          token: string;
+        }
+      ).token;
     };
     const tokenA = await createToken("Token A");
     const tokenB = await createToken("Token B");
@@ -2012,7 +2054,7 @@ describe("ConnectServer", () => {
   it("does not replay legacy unscoped records to stored tokens and allows them after expiry", async () => {
     let executions = 0;
     const idempotency = new MemoryIdempotencyStore();
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const input = { message: "hello" };
     const seedLegacy = async (key: string, expiresAt: string): Promise<void> => {
       const keyHash = hashIdempotencyKey(key);
@@ -2020,6 +2062,7 @@ describe("ConnectServer", () => {
         actionId: "example.echo",
         connectionName: "default",
         input,
+        tenantId: compatibilityTenantId,
       });
       await idempotency.claim({
         keyHash,
@@ -2027,6 +2070,7 @@ describe("ConnectServer", () => {
         claimId: `claim-${key}`,
         now: "2026-07-19T00:00:00.000Z",
         expiresAt,
+        tenantId: compatibilityTenantId,
       });
       await idempotency.complete({
         keyHash,
@@ -2037,6 +2081,7 @@ describe("ConnectServer", () => {
           body: { success: true, message: "OK", data: { legacySecret: true }, meta: {} },
         },
         expiresAt,
+        tenantId: compatibilityTenantId,
       });
     };
     await seedLegacy("legacy-live", "2099-01-01T00:00:00.000Z");
@@ -2060,7 +2105,11 @@ describe("ConnectServer", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "Stored token" }),
     });
-    const token = ((await created.json()) as { token: string }).token;
+    const token = (
+      (await created.json()) as {
+        token: string;
+      }
+    ).token;
     const request = (key: string) => ({
       method: "POST",
       headers: {
@@ -2139,8 +2188,9 @@ describe("ConnectServer", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ authType: "api_key", values: { apiKey: "example-key" } }),
     });
-    const connected = (await connectedResponse.json()) as { id: string };
-
+    const connected = (await connectedResponse.json()) as {
+      id: string;
+    };
     const longQuery = "a".repeat(600);
     const response = await app.request("/v1/actions/example.echo", {
       method: "POST",
@@ -2631,9 +2681,8 @@ describe("ConnectServer", () => {
       capability: "runtime",
       credentialId: "bootstrap",
     });
-
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
-    const persistent = await runtimeTokens.createToken("control-center");
+    const runtimeTokens = createRuntimeTokens();
+    const persistent = await runtimeTokens.createToken("control-center", undefined, compatibilityTenantId);
     const persistentApp = createTestServer([apiKeyProvider], { runtimeTokens }).createApp();
     const persistentResponse = await persistentApp.request("/v1/principal", {
       headers: { authorization: `Bearer ${persistent.token}` },
@@ -2675,10 +2724,12 @@ describe("ConnectServer", () => {
       ],
       { actionSearch },
     ).createApp();
-
     const apiSearch = await app.request("/api/actions/search?q=echo");
     expect(apiSearch.status).toBe(200);
-    const apiResults = (await apiSearch.json()) as Array<{ id: string; inputSchema: Record<string, unknown> }>;
+    const apiResults = (await apiSearch.json()) as Array<{
+      id: string;
+      inputSchema: Record<string, unknown>;
+    }>;
     expect(apiResults.map((result) => result.id)).toEqual(["example.echo"]);
     expect(apiResults[0]).toMatchObject({ authenticated: false });
     expect(apiResults[0]?.inputSchema).toEqual({ type: "object" });
@@ -2687,7 +2738,11 @@ describe("ConnectServer", () => {
     expect(runtimeSearch.status).toBe(200);
     const runtimeBody = (await runtimeSearch.json()) as {
       success: boolean;
-      data: Array<{ id: string; authenticated: boolean; outputSchema: Record<string, unknown> }>;
+      data: Array<{
+        id: string;
+        authenticated: boolean;
+        outputSchema: Record<string, unknown>;
+      }>;
     };
     expect(runtimeBody.success).toBe(true);
     expect(runtimeBody.data.map((result) => result.id)).toEqual(["example.echo"]);
@@ -2713,8 +2768,9 @@ describe("ConnectServer", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ authType: "api_key", values: { apiKey: "example-key" } }),
     });
-    const connected = (await connectedResponse.json()) as { id: string };
-
+    const connected = (await connectedResponse.json()) as {
+      id: string;
+    };
     const apps = await app.request("/v1/apps");
     expect(apps.status).toBe(200);
     const appsBody = await apps.json();
@@ -3230,9 +3286,8 @@ describe("ConnectServer", () => {
       meta: {},
     });
   });
-
   it("applies stored runtime token proxy grants independently of action rules", async () => {
-    const runtimeTokens = new RuntimeTokenService(new MemoryRuntimeTokenStore());
+    const runtimeTokens = createRuntimeTokens();
     const app = createTestServer([apiKeyProvider], {
       runtimeTokens,
       providerLoader: new ProxyProviderLoader(),
@@ -3253,7 +3308,9 @@ describe("ConnectServer", () => {
         allowedProxies: [],
       }),
     });
-    const deniedToken = (await deniedCreation.json()) as { token: string };
+    const deniedToken = (await deniedCreation.json()) as {
+      token: string;
+    };
     const grantedCreation = await app.request("/api/runtime-tokens", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -3264,7 +3321,9 @@ describe("ConnectServer", () => {
         allowedProxies: ["example"],
       }),
     });
-    const grantedToken = (await grantedCreation.json()) as { token: string };
+    const grantedToken = (await grantedCreation.json()) as {
+      token: string;
+    };
     const request = (token: string) => ({
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -3414,8 +3473,9 @@ describe("ConnectServer", () => {
         body: authorizedForm,
       });
       expect(upload.status).toBe(200);
-      const uploadBody = (await upload.json()) as { fileId: string };
-
+      const uploadBody = (await upload.json()) as {
+        fileId: string;
+      };
       const download = await app.request(`/api/files/${uploadBody.fileId}`);
       expect(download.status).toBe(401);
     } finally {
@@ -3561,7 +3621,7 @@ function createTestServer(providers: ProviderDefinition[], options: CreateTestSe
   });
   const providerLoader = options.providerLoader ?? new EmptyProviderLoader();
   const idempotency = options.idempotency ?? new MemoryIdempotencyStore();
-  const runtimeTokens = options.runtimeTokens ?? new RuntimeTokenService(new MemoryRuntimeTokenStore());
+  const runtimeTokens = options.runtimeTokens ?? createRuntimeTokens();
   const runs = options.runs ?? new MemoryRunLogStore();
   const connections = new ConnectionService({
     catalog,
@@ -3607,7 +3667,7 @@ function createTestServer(providers: ProviderDefinition[], options: CreateTestSe
       clientConfigs,
       connections,
       states: new MemoryOAuthStateStore(),
-      secretCodec: options.secretCodec,
+      secretCodec: options.secretCodec ?? new PlainTextSecretCodec(),
       isCustomClientConfigAllowed,
     }),
     actions: actionRunner,
@@ -3620,7 +3680,7 @@ function createTestServer(providers: ProviderDefinition[], options: CreateTestSe
     registerStaticRoutes: staticRoot ? (app) => registerStaticRoutes(app, staticRoot) : undefined,
     auth: {
       ...options.auth,
-      hasRuntimeTokens: async () => (await runtimeTokens.listTokens()).length > 0,
+      hasRuntimeTokens: async () => (await runtimeTokens.listTokens(compatibilityTenantId)).length > 0,
       resolveRuntimeToken: (token) => runtimeTokens.resolveToken(token),
       verifyRuntimeJwt: options.auth?.verifyRuntimeJwt,
     },
@@ -3635,8 +3695,10 @@ type TestLogEntry = {
   fields: Record<string, unknown>;
   message: string;
 };
-
-function createTestLogger(): { entries: TestLogEntry[]; logger: Logger } {
+function createTestLogger(): {
+  entries: TestLogEntry[];
+  logger: Logger;
+} {
   const entries: TestLogEntry[] = [];
   const record =
     (level: TestLogEntry["level"]) =>
@@ -3665,8 +3727,12 @@ async function createTestStaticRoot(): Promise<string> {
   await writeFile(join(root, "assets", "console.js"), "console.log('ok');");
   return root;
 }
-
-function createTestTransitFiles(rootDir: string, options: { maxBytes?: number } = {}): TransitFileService {
+function createTestTransitFiles(
+  rootDir: string,
+  options: {
+    maxBytes?: number;
+  } = {},
+): TransitFileService {
   return new TransitFileService({
     rootDir,
     publicOrigin: "http://localhost:3000",
@@ -3815,8 +3881,10 @@ class MemoryConnectionStore implements IConnectionStore {
   async list(): Promise<StoredConnection[]> {
     return [...this.store.values()];
   }
+  async ownsConnection(connectionId: string): Promise<boolean> {
+    return [...this.store.values()].some((connection) => connection.id === connectionId);
+  }
 }
-
 function createConnectionKey(service: string, connectionName: string): string {
   return `${service}:${connectionName}`;
 }
@@ -3854,10 +3922,11 @@ class MemoryOAuthStateStore implements IOAuthStateStore {
     return value;
   }
 }
-
 class MemoryRuntimeTokenStore implements IRuntimeTokenStore {
   private readonly tokens = new Map<string, RuntimeTokenRecord>();
-
+  async hasActiveToken(): Promise<boolean> {
+    return this.tokens.size > 0;
+  }
   async add(record: RuntimeTokenRecord): Promise<void> {
     this.tokens.set(record.id, record);
   }
@@ -3891,8 +3960,18 @@ class MemoryRuntimeTokenStore implements IRuntimeTokenStore {
   async markUsed(id: string, usedAt: string): Promise<void> {
     const token = this.tokens.get(id);
     if (token) {
-      this.tokens.set(id, { ...token, lastUsedAt: usedAt });
+      this.tokens.set(id, { ...token, lastUsedAt: usedAt, tenantId: compatibilityTenantId });
     }
+  }
+}
+
+function createRuntimeTokens(): RuntimeTokenService {
+  return new RuntimeTokenService(new MemoryRuntimeTokenStore(), new AllowAllMemoryConnectionStore());
+}
+
+class AllowAllMemoryConnectionStore extends MemoryConnectionStore {
+  override async ownsConnection(): Promise<boolean> {
+    return true;
   }
 }
 
@@ -3989,8 +4068,9 @@ class MemoryRunLogStore implements IRunLogStore {
   constructor(addError?: Error) {
     this.addError = addError;
   }
-
-  async add(run: RunLog): Promise<{ retentionApplied: boolean }> {
+  async add(run: RunLog): Promise<{
+    retentionApplied: boolean;
+  }> {
     if (this.addError) throw this.addError;
     this.runs.unshift(run);
     return { retentionApplied: true };

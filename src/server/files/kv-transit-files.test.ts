@@ -1,15 +1,17 @@
 import type { KVNamespaceBinding } from "../cloudflare/cloudflare-bindings.ts";
 
 import { describe, expect, it } from "vitest";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { KVTransitFileService } from "./kv-transit-files.ts";
 import { TransitFileError } from "./transit-file-store.ts";
-
 describe("KVTransitFileService", () => {
   it("uploads, reads, and deletes transit files", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace);
-
-    const upload = await service.create(new File(["hello transit"], "report.TXT", { type: "text/plain" }));
+    const upload = await service.create(
+      new File(["hello transit"], "report.TXT", { type: "text/plain" }),
+      compatibilityTenantId,
+    );
     expect(upload.fileId).toMatch(/^[a-f0-9]{32}\.txt$/);
     expect(upload.downloadUrl).toBe(`http://localhost:3000/api/files/${upload.fileId}`);
     expect(upload).toMatchObject({
@@ -17,29 +19,27 @@ describe("KVTransitFileService", () => {
       name: "report.TXT",
       mimeType: "text/plain",
     });
-
-    const read = await service.read(upload.fileId);
+    const read = await service.read(upload.fileId, compatibilityTenantId);
     expect(read).toMatchObject({
       sizeBytes: 13,
       name: "report.TXT",
       mimeType: "text/plain",
     });
     await expect(read.file.text()).resolves.toBe("hello transit");
-
-    const response = await service.response(upload.fileId);
+    const response = await service.response(upload.fileId, compatibilityTenantId);
     expect(response.headers.get("content-type")).toBe("text/plain");
     expect(response.headers.get("content-length")).toBe("13");
     await expect(response.text()).resolves.toBe("hello transit");
-
-    await expect(service.delete(upload.fileId)).resolves.toBe(true);
-    await expect(service.delete(upload.fileId)).resolves.toBe(false);
-    await expect(service.read(upload.fileId)).rejects.toMatchObject({ status: 404, code: "file_not_found" });
+    await expect(service.delete(upload.fileId, compatibilityTenantId)).resolves.toBe(true);
+    await expect(service.delete(upload.fileId, compatibilityTenantId)).resolves.toBe(false);
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toMatchObject({
+      status: 404,
+      code: "file_not_found",
+    });
   });
-
   it("rejects files over the configured limit", async () => {
     const service = createService(new MemoryKVNamespace(), { maxBytes: 4 });
-
-    await expect(service.create(new File(["12345"], "large.bin"))).rejects.toMatchObject({
+    await expect(service.create(new File(["12345"], "large.bin"), compatibilityTenantId)).rejects.toMatchObject({
       status: 413,
       code: "file_too_large",
     });
@@ -48,9 +48,7 @@ describe("KVTransitFileService", () => {
   it("writes both keys with KV native expirationTtl", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace, { ttlSeconds: 120 });
-
-    const upload = await service.create(new File(["ttl"], "ttl.txt"));
-
+    const upload = await service.create(new File(["ttl"], "ttl.txt"), compatibilityTenantId);
     expect(namespace.entry(`transit/${upload.fileId}`)?.expirationTtl).toBe(120);
     expect(namespace.entry(`transit/${upload.fileId}.meta.json`)?.expirationTtl).toBe(120);
   });
@@ -58,27 +56,20 @@ describe("KVTransitFileService", () => {
   it("clamps a sub-minimum ttl up to KV's 60 second floor", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace, { ttlSeconds: 10 });
-
-    const upload = await service.create(new File(["short"], "short.txt"));
-
+    const upload = await service.create(new File(["short"], "short.txt"), compatibilityTenantId);
     expect(namespace.entry(`transit/${upload.fileId}`)?.expirationTtl).toBe(60);
   });
-
   it("clamps maxBytes down to KV's 25 MiB per-value limit", () => {
     const service = createService(new MemoryKVNamespace(), { maxBytes: 100 * 1024 * 1024 });
-
     expect(service.maxBytes).toBe(25 * 1024 * 1024);
   });
-
   it("does not delete the surviving key on a partial (eventually consistent) miss", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace);
-    const upload = await service.create(new File(["payload"], "payload.txt"));
-
+    const upload = await service.create(new File(["payload"], "payload.txt"), compatibilityTenantId);
     // Simulate the metadata write not having propagated yet.
     await namespace.delete(`transit/${upload.fileId}.meta.json`);
-
-    await expect(service.read(upload.fileId)).rejects.toMatchObject({ status: 404 });
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toMatchObject({ status: 404 });
     // The object key must survive so a later, fully-propagated read can succeed.
     expect(namespace.has(`transit/${upload.fileId}`)).toBe(true);
   });
@@ -86,54 +77,51 @@ describe("KVTransitFileService", () => {
   it("treats malformed metadata as not found", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace);
-    const upload = await service.create(new File(["broken"], "broken.txt"));
+    const upload = await service.create(new File(["broken"], "broken.txt"), compatibilityTenantId);
     await namespace.put(`transit/${upload.fileId}.meta.json`, "{");
-
-    await expect(service.read(upload.fileId)).rejects.toBeInstanceOf(TransitFileError);
-    await expect(service.read(upload.fileId)).rejects.toMatchObject({ status: 404 });
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toBeInstanceOf(TransitFileError);
+    await expect(service.read(upload.fileId, compatibilityTenantId)).rejects.toMatchObject({ status: 404 });
   });
-
   it("fills safe defaults for partial-but-valid metadata", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace);
-    const upload = await service.create(new File(["body"], "orig.txt", { type: "text/plain" }));
+    const upload = await service.create(new File(["body"], "orig.txt", { type: "text/plain" }), compatibilityTenantId);
     // Valid JSON, but missing every descriptive field.
     await namespace.put(
       `transit/${upload.fileId}.meta.json`,
       JSON.stringify({ createdAt: "2020-01-01T00:00:00.000Z" }),
     );
-
-    const read = await service.read(upload.fileId);
+    const read = await service.read(upload.fileId, compatibilityTenantId);
     expect(read).toMatchObject({ name: "file", mimeType: "application/octet-stream", sizeBytes: 0 });
   });
-
   it("infers the mime type from the extension when the file has no type", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace);
-
-    const upload = await service.create(new File(["{}"], "data.json"));
-
+    const upload = await service.create(new File(["{}"], "data.json"), compatibilityTenantId);
     expect(upload.mimeType).toBe("application/json");
-    await expect(service.read(upload.fileId).then((r) => r.mimeType)).resolves.toBe("application/json");
+    await expect(service.read(upload.fileId, compatibilityTenantId).then((r) => r.mimeType)).resolves.toBe(
+      "application/json",
+    );
   });
-
   it("rejects malformed file ids without touching storage (path-traversal guard)", async () => {
     const service = createService(new MemoryKVNamespace());
-
     for (const badId of ["../secret", "transit/evil", "ABCDEF", "not-hex", `${"a".repeat(32)}.exe/../x`]) {
-      await expect(service.read(badId)).rejects.toMatchObject({ status: 404, code: "file_not_found" });
-      await expect(service.delete(badId)).rejects.toMatchObject({ status: 404, code: "file_not_found" });
+      await expect(service.read(badId, compatibilityTenantId)).rejects.toMatchObject({
+        status: 404,
+        code: "file_not_found",
+      });
+      await expect(service.delete(badId, compatibilityTenantId)).rejects.toMatchObject({
+        status: 404,
+        code: "file_not_found",
+      });
     }
   });
-
   it("keeps ordinary letters while escaping quotes, backslashes, and control bytes in the filename header", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace);
-
     // Includes a quote, backslash, CR and LF around ordinary letters (notably "n").
-    const upload = await service.create(new File(["ok"], 'a"b\\c\rd\ne.txt'));
-    const response = await service.response(upload.fileId);
-
+    const upload = await service.create(new File(["ok"], 'a"b\\c\rd\ne.txt'), compatibilityTenantId);
+    const response = await service.response(upload.fileId, compatibilityTenantId);
     // A regex bug here previously replaced the letter "n" and let control bytes through.
     expect(response.headers.get("content-disposition")).toBe('attachment; filename="a_b_c_d_e.txt"');
   });
@@ -141,10 +129,11 @@ describe("KVTransitFileService", () => {
   it("serves a file whose name is outside Latin-1", async () => {
     const namespace = new MemoryKVNamespace();
     const service = createService(namespace);
-    const upload = await service.create(new File(["ok"], "发票.pdf", { type: "application/pdf" }));
-
-    const response = await service.response(upload.fileId);
-
+    const upload = await service.create(
+      new File(["ok"], "发票.pdf", { type: "application/pdf" }),
+      compatibilityTenantId,
+    );
+    const response = await service.response(upload.fileId, compatibilityTenantId);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-disposition")).toBe(
       "attachment; filename=\"__.pdf\"; filename*=UTF-8''%E5%8F%91%E7%A5%A8.pdf",
@@ -161,10 +150,12 @@ describe("KVTransitFileService", () => {
     expect(() => createService(new MemoryKVNamespace(), { ttlSeconds: 10, maxBytes: 500 * 1024 * 1024 })).not.toThrow();
   });
 });
-
 function createService(
   namespace: MemoryKVNamespace,
-  options: { ttlSeconds?: number; maxBytes?: number } = {},
+  options: {
+    ttlSeconds?: number;
+    maxBytes?: number;
+  } = {},
 ): KVTransitFileService {
   return new KVTransitFileService({
     namespace,
@@ -185,7 +176,10 @@ class MemoryKVNamespace implements KVNamespaceBinding {
   async put(
     key: string,
     value: string | ArrayBuffer | ArrayBufferView | ReadableStream,
-    options?: { expirationTtl?: number; expiration?: number },
+    options?: {
+      expirationTtl?: number;
+      expiration?: number;
+    },
   ): Promise<void> {
     this.store.set(key, { bytes: await toArrayBuffer(value), expirationTtl: options?.expirationTtl });
   }

@@ -15,7 +15,6 @@ import type { IOAuthCredentialRefresher } from "./oauth/oauth-credential-refresh
 import type { IProviderLoader } from "./providers/provider-loader.ts";
 
 import { normalizeCredentialValues } from "./core/credential-fields.ts";
-import { compatibilityTenantId } from "./core/tenant.ts";
 import { providerFetch } from "./providers/provider-runtime.ts";
 
 export const defaultConnectionName = "default";
@@ -78,17 +77,17 @@ export interface ExecutionConnection {
  * Storage contract for local provider connections.
  */
 export interface IConnectionStore {
-  get(service: string, connectionName: string, tenantId?: TenantId): Promise<StoredConnection | undefined>;
+  get(service: string, connectionName: string, tenantId: TenantId): Promise<StoredConnection | undefined>;
   set(
     service: string,
     connectionName: string,
     credential: ResolvedCredential,
-    tenantId?: TenantId,
+    tenantId: TenantId,
   ): Promise<StoredConnection>;
-  updateCredential(input: StoredConnection, tenantId?: TenantId): Promise<boolean>;
-  delete(service: string, connectionName: string, tenantId?: TenantId): Promise<void>;
-  list(tenantId?: TenantId): Promise<StoredConnection[]>;
-  ownsConnection?(connectionId: string, tenantId?: TenantId): Promise<boolean>;
+  updateCredential(input: StoredConnection, tenantId: TenantId): Promise<boolean>;
+  delete(service: string, connectionName: string, tenantId: TenantId): Promise<void>;
+  list(tenantId: TenantId): Promise<StoredConnection[]>;
+  ownsConnection(connectionId: string, tenantId: TenantId): Promise<boolean>;
 }
 
 interface ServiceConnection {
@@ -141,7 +140,7 @@ export class ConnectionService {
     this.logger = input.logger;
   }
 
-  async listConnections(tenantId: TenantId = compatibilityTenantId): Promise<ConnectionSummary[]> {
+  async listConnections(tenantId: TenantId): Promise<ConnectionSummary[]> {
     const configured = await this.store.list(tenantId);
     const configuredByService = new Map<string, ServiceConnection[]>();
     for (const connection of configured) {
@@ -173,10 +172,7 @@ export class ConnectionService {
     });
   }
 
-  async listConnectionsByService(
-    service: string,
-    tenantId: TenantId = compatibilityTenantId,
-  ): Promise<ConnectionSummary[]> {
+  async listConnectionsByService(service: string, tenantId: TenantId): Promise<ConnectionSummary[]> {
     const provider = this.getProvider(service);
     const connections = (await this.store.list(tenantId)).filter((connection) => connection.service === service);
     if (connections.length > 0) {
@@ -195,7 +191,7 @@ export class ConnectionService {
       : [];
   }
 
-  async listAuthenticatedServices(services: string[], tenantId: TenantId = compatibilityTenantId): Promise<string[]> {
+  async listAuthenticatedServices(services: string[], tenantId: TenantId): Promise<string[]> {
     const configured = await this.store.list(tenantId);
     const authenticated = new Set(
       configured
@@ -207,8 +203,8 @@ export class ConnectionService {
 
   async getConnectionSummary(
     service: string,
-    connectionName?: string,
-    tenantId: TenantId = compatibilityTenantId,
+    connectionName: string | undefined,
+    tenantId: TenantId,
   ): Promise<ConnectionSummary | undefined> {
     const provider = this.getProvider(service);
     const name = normalizeConnectionName(connectionName);
@@ -226,8 +222,8 @@ export class ConnectionService {
 
   async resolveForExecution(
     service: string,
-    connectionName?: string,
-    tenantId: TenantId = compatibilityTenantId,
+    connectionName: string | undefined,
+    tenantId: TenantId,
   ): Promise<ExecutionConnection> {
     const provider = this.getProvider(service);
     const name = normalizeConnectionName(connectionName);
@@ -255,8 +251,8 @@ export class ConnectionService {
 
   async getCredential(
     service: string,
-    connectionName?: string,
-    tenantId: TenantId = compatibilityTenantId,
+    connectionName: string | undefined,
+    tenantId: TenantId,
   ): Promise<ResolvedCredential | undefined> {
     const provider = this.getProvider(service);
     const name = normalizeConnectionName(connectionName);
@@ -274,7 +270,7 @@ export class ConnectionService {
     return this.supportsAuth(provider, "no_auth") ? { authType: "no_auth" } : undefined;
   }
 
-  forConnection(connectionName?: string, tenantId: TenantId = compatibilityTenantId): ExecutionConnection {
+  forConnection(connectionName: string | undefined, tenantId: TenantId): ExecutionConnection {
     return {
       getCredential: (service: string) => this.getCredential(service, connectionName, tenantId),
     };
@@ -282,8 +278,8 @@ export class ConnectionService {
 
   async connectWithoutAuth(
     service: string,
-    input: ConnectWithoutAuthInput = {},
-    _tenantId: TenantId = compatibilityTenantId,
+    input: ConnectWithoutAuthInput,
+    _tenantId: TenantId,
   ): Promise<ConnectionSummary> {
     const provider = this.getAvailableProvider(service);
     if (!this.supportsAuth(provider, "no_auth")) {
@@ -296,7 +292,7 @@ export class ConnectionService {
   async connectWithApiKey(
     service: string,
     input: ConnectWithCredentialInput,
-    tenantId: TenantId = compatibilityTenantId,
+    tenantId: TenantId,
   ): Promise<ConnectionSummary> {
     const provider = this.getAvailableProvider(service);
     if (!this.supportsAuth(provider, "api_key")) {
@@ -332,7 +328,7 @@ export class ConnectionService {
   async connectWithCustomCredential(
     service: string,
     input: ConnectWithCredentialInput,
-    tenantId: TenantId = compatibilityTenantId,
+    tenantId: TenantId,
   ): Promise<ConnectionSummary> {
     const provider = this.getAvailableProvider(service);
     if (!this.supportsAuth(provider, "custom_credential")) {
@@ -365,8 +361,8 @@ export class ConnectionService {
   async setOAuthCredential(
     service: string,
     credential: Extract<ResolvedCredential, { authType: "oauth2" }>,
-    connectionNameInput?: string,
-    tenantId: TenantId = compatibilityTenantId,
+    connectionNameInput: string | undefined,
+    tenantId: TenantId,
   ): Promise<ConnectionSummary> {
     const provider = this.getAvailableProvider(service);
     if (!this.supportsAuth(provider, "oauth2")) {
@@ -392,8 +388,8 @@ export class ConnectionService {
 
   async disconnect(
     service: string,
-    connectionNameInput?: string,
-    tenantId: TenantId = compatibilityTenantId,
+    connectionNameInput: string | undefined,
+    tenantId: TenantId,
   ): Promise<ConnectionSummary | DisconnectedConnectionSummary> {
     const connectionName = normalizeConnectionName(connectionNameInput);
     await this.store.delete(service, connectionName, tenantId);

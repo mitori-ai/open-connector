@@ -8,7 +8,7 @@ import type {
 } from "./oauth-client-config-service.ts";
 
 import { createHash, randomBytes } from "node:crypto";
-import { compatibilityTenantId } from "../core/tenant.ts";
+import { defaultConnectionName } from "../connection-service.ts";
 import { normalizeSlackAuthorizationCredential } from "../providers/slack/oauth.ts";
 import { requestAuthorizationCodeToken } from "./oauth-token.ts";
 
@@ -22,27 +22,32 @@ export type OAuthAuthorizationStart = {
 };
 
 export interface OAuthAuthorizationStartInput {
-  tenantId?: TenantId;
+  tenantId: TenantId;
   service: string;
   connectionName?: string;
+  sessionCorrelation: string;
   returnUrl?: string;
   clientConfig?: OAuthClientConfigInput;
 }
 
 export interface OAuthAuthorizationCompleteInput {
-  state: string;
-  code: string;
+  completionCapability: string;
+  sessionCorrelation: string;
+  tenantId: TenantId;
 }
 
 /**
  * Short-lived OAuth state stored while the browser completes authorization.
  */
 export interface OAuthAuthorizationState {
-  tenantId?: TenantId;
+  tenantId: TenantId;
   service: string;
   connectionName?: string;
   state: string;
   createdAt: string;
+  sessionCorrelation: string;
+  authorizationCode?: string;
+  providerState?: string;
   pkceCodeVerifier?: string;
   clientConfig?: OAuthClientConfig;
   /** Exact allowlisted completion URL bound to this one-time state. */
@@ -54,7 +59,7 @@ export interface OAuthFlowServiceOptions {
   connections: ConnectionService;
   states: IOAuthStateStore;
   stateMaxAgeMs?: number;
-  secretCodec?: ISecretCodec;
+  secretCodec: ISecretCodec;
   isCustomClientConfigAllowed?: (service: string) => boolean;
 }
 
@@ -74,7 +79,7 @@ export class OAuthFlowService {
   private readonly connections: ConnectionService;
   private readonly states: IOAuthStateStore;
   private readonly stateMaxAgeMs: number;
-  private readonly secretCodec?: ISecretCodec;
+  private readonly secretCodec: ISecretCodec;
   private readonly isCustomClientConfigAllowed: (service: string) => boolean;
 
   constructor(input: OAuthFlowServiceOptions) {
@@ -87,8 +92,11 @@ export class OAuthFlowService {
   }
 
   async startAuthorization(input: OAuthAuthorizationStartInput): Promise<OAuthAuthorizationStart> {
-    const { service, connectionName, returnUrl } = input;
-    const tenantId = input.tenantId ?? compatibilityTenantId;
+    const { service, returnUrl, tenantId } = input;
+    if (input.sessionCorrelation.length < 16 || input.sessionCorrelation.length > 256) {
+      throw new OAuthFlowError("invalid_input", "sessionCorrelation must contain 16-256 characters.");
+    }
+    const connectionName = input.connectionName ?? defaultConnectionName;
     this.connections.assertProviderAvailable(service);
     const auth = this.clientConfigs.getOAuthDefinition(service);
     const config = input.clientConfig
@@ -106,6 +114,7 @@ export class OAuthFlowService {
       connectionName,
       state,
       createdAt: new Date().toISOString(),
+      sessionCorrelation: input.sessionCorrelation,
       pkceCodeVerifier,
       clientConfig: input.clientConfig ? config : undefined,
       returnUrl,
@@ -147,10 +156,58 @@ export class OAuthFlowService {
     return pending;
   }
 
+  async stageAuthorization(
+    state: string,
+    code: string,
+  ): Promise<{ completionCapability: string; returnUrl?: string; service: string }> {
+    const pending = await this.consumeAuthorizationState(state);
+    const completionId = crypto.randomUUID();
+    await this.states.set({
+      ...pending,
+      state: completionId,
+      providerState: pending.state,
+      authorizationCode: code,
+    });
+    const completionCapability = await this.createCompletionCapability({
+      completionId,
+      tenantId: pending.tenantId,
+      connectionName: pending.connectionName!,
+      sessionCorrelation: pending.sessionCorrelation,
+    });
+    return { completionCapability, returnUrl: pending.returnUrl, service: pending.service };
+  }
+
   async completeAuthorization(
     input: OAuthAuthorizationCompleteInput,
   ): Promise<{ service: string; connected: true; returnUrl?: string }> {
-    const pending = await this.consumeAuthorizationState(input.state);
+    const capability = await this.readCompletionCapability(input.completionCapability);
+    if (capability.tenantId !== input.tenantId || capability.sessionCorrelation !== input.sessionCorrelation) {
+      throw new OAuthFlowError("invalid_oauth_session", "OAuth completion tenant or session does not match.");
+    }
+    const pending = await this.consumeAuthorizationState(capability.completionId);
+    if (
+      pending.tenantId !== capability.tenantId ||
+      pending.connectionName !== capability.connectionName ||
+      pending.sessionCorrelation !== capability.sessionCorrelation ||
+      !pending.authorizationCode
+    ) {
+      throw new OAuthFlowError("invalid_oauth_session", "OAuth completion identity does not match.", pending);
+    }
+    return this.finishAuthorization(pending, pending.authorizationCode);
+  }
+
+  /** Single-user compatibility path. Shared runtimes must use staged tenant-admin completion. */
+  async completeLocalAuthorization(
+    state: string,
+    code: string,
+  ): Promise<{ service: string; connected: true; returnUrl?: string }> {
+    return this.finishAuthorization(await this.consumeAuthorizationState(state), code);
+  }
+
+  private async finishAuthorization(
+    pending: OAuthAuthorizationState,
+    code: string,
+  ): Promise<{ service: string; connected: true; returnUrl?: string }> {
     try {
       const auth = this.clientConfigs.getOAuthDefinition(pending.service);
       const config = pending.clientConfig ?? (await this.clientConfigs.getConfig(pending.service));
@@ -162,8 +219,8 @@ export class OAuthFlowService {
       }
 
       let tokenResponse = await requestAuthorizationCodeToken({
-        code: input.code,
-        state: pending.state,
+        code,
+        state: pending.providerState ?? pending.state,
         clientId: config.clientId,
         clientSecret: config.clientSecret,
         redirectUri: this.clientConfigs.expectedRedirectUri(pending.service),
@@ -193,7 +250,7 @@ export class OAuthFlowService {
         pending.service,
         oauthCredential,
         pending.connectionName,
-        pending.tenantId ?? compatibilityTenantId,
+        pending.tenantId,
       );
       return { service: pending.service, connected: true, returnUrl: pending.returnUrl };
     } catch (error) {
@@ -222,6 +279,47 @@ export class OAuthFlowService {
     }
     return this.clientConfigs.normalizeConfig(service, input);
   }
+
+  private async createCompletionCapability(input: OAuthCompletionCapability): Promise<string> {
+    const encoded = await this.secretCodec.encode(JSON.stringify({ version: 1, ...input }));
+    return Buffer.from(encoded, "utf8").toString("base64url");
+  }
+
+  private async readCompletionCapability(value: string): Promise<OAuthCompletionCapability> {
+    if (!value) {
+      throw new OAuthFlowError("invalid_oauth_session", "OAuth completion session is missing.");
+    }
+    try {
+      const stored = Buffer.from(value, "base64url").toString("utf8");
+      const parsed = JSON.parse(await this.secretCodec.decode(stored)) as Partial<OAuthCompletionCapability> & {
+        version?: number;
+      };
+      if (
+        parsed.version !== 1 ||
+        typeof parsed.completionId !== "string" ||
+        typeof parsed.tenantId !== "string" ||
+        typeof parsed.connectionName !== "string" ||
+        typeof parsed.sessionCorrelation !== "string"
+      ) {
+        throw new Error("invalid capability");
+      }
+      return {
+        completionId: parsed.completionId,
+        tenantId: parsed.tenantId as TenantId,
+        connectionName: parsed.connectionName,
+        sessionCorrelation: parsed.sessionCorrelation,
+      };
+    } catch {
+      throw new OAuthFlowError("invalid_oauth_session", "OAuth completion session is invalid.");
+    }
+  }
+}
+
+interface OAuthCompletionCapability {
+  completionId: string;
+  tenantId: TenantId;
+  connectionName: string;
+  sessionCorrelation: string;
 }
 
 function setAuthorizationParam(
