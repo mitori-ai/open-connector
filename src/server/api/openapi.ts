@@ -201,7 +201,7 @@ export function createOpenApiDocument(
         tags: ["System"],
         summary: "Return the bearer-authenticated runtime principal.",
         description:
-          "Returns only authentication-derived tenant and credential identity. Tenant selectors are not accepted.",
+          "Validates a persistent tenant runtime token and returns only its authentication-derived tenant and credential identity. JWT principals are not introspectable, and tenant selectors or request bodies are not accepted.",
         responses: {
           200: jsonResponse({ $ref: "#/components/schemas/RuntimePrincipal" }),
           400: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),

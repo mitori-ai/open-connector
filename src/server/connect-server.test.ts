@@ -2644,6 +2644,15 @@ describe("ConnectServer", () => {
       capability: "runtime",
       credentialId: persistent.record.id,
     });
+
+    const jwtApp = createTestServer([apiKeyProvider], {
+      auth: { verifyRuntimeJwt: async (token) => token === "jwt-access-token" },
+    }).createApp();
+    const jwtResponse = await jwtApp.request("/v1/principal", {
+      headers: { authorization: "Bearer jwt-access-token" },
+    });
+    expect(jwtResponse.status).toBe(401);
+    expect(await jwtResponse.text()).not.toContain("jwt:legacy");
   });
 
   it("drops stale action search index hits that are missing from the catalog", async () => {

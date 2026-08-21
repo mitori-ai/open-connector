@@ -1211,18 +1211,18 @@ export class ConnectServer {
     return context.json({ tenantId: principal.tenantId, capability: principal.capability });
   }
 
-  private getRuntimePrincipal(context: Context): Response {
-    if (hasTenantSelector(context)) {
-      return jsonError(context, 400, "invalid_input", "Tenant selectors are not accepted on this endpoint.");
+  private async getRuntimePrincipal(context: Context): Promise<Response> {
+    if (hasTenantSelector(context) || (await hasRequestBody(context))) {
+      return jsonError(context, 400, "invalid_input", "This endpoint does not accept tenant selectors or a body.");
     }
     const principal = readAuthenticatedPrincipal(context);
     if (principal?.kind !== "tenant" || principal.capability !== "runtime") {
       return jsonError(context, 401, "unauthorized", "A runtime bearer token is required.");
     }
-    if (
-      this.options.auth?.sharedRuntime &&
-      (principal.runtimeTokenId === "bootstrap" || principal.runtimeTokenId === "local-open")
-    ) {
+    const isNonSharedCompatibilityPrincipal =
+      !this.options.auth?.sharedRuntime &&
+      (principal.runtimeTokenId === "bootstrap" || principal.runtimeTokenId === "local-open");
+    if (!readRuntimeGrant(context) && !isNonSharedCompatibilityPrincipal) {
       return jsonError(context, 401, "unauthorized", "A persistent tenant runtime credential is required.");
     }
     return context.json(serializeRuntimePrincipal(principal));
@@ -1321,15 +1321,22 @@ export class ConnectServer {
 }
 
 function hasTenantSelector(context: Context): boolean {
-  const queryHasTenantSelector = [...new URL(context.req.url).searchParams.keys()].some(
-    (name) => name.toLowerCase().replaceAll("-", "").replaceAll("_", "") === "tenantid",
-  );
+  const isTenantSelector = (name: string): boolean =>
+    ["tenantid", "xtenantid", "xootenantid", "xoomoltenantid"].includes(
+      name.toLowerCase().replaceAll("-", "").replaceAll("_", ""),
+    );
   return (
-    queryHasTenantSelector ||
-    context.req.header("x-tenant-id") !== undefined ||
-    context.req.header("x-oo-tenant-id") !== undefined ||
-    context.req.header("x-oomol-tenant-id") !== undefined
+    [...new URL(context.req.url).searchParams.keys()].some(isTenantSelector) ||
+    [...context.req.raw.headers.keys()].some(isTenantSelector)
   );
+}
+
+async function hasRequestBody(context: Context): Promise<boolean> {
+  const contentLength = context.req.header("content-length")?.trim();
+  if ((contentLength !== undefined && contentLength !== "0") || context.req.header("transfer-encoding") !== undefined) {
+    return true;
+  }
+  return context.req.raw.body !== null && (await context.req.raw.clone().arrayBuffer()).byteLength > 0;
 }
 
 function readOAuthClientConfigInput(body: Record<string, unknown>): OAuthClientConfigInput | undefined {

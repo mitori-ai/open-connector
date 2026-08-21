@@ -39,8 +39,10 @@ tenant runtime token returns only its bearer-derived identity:
 }
 ```
 
-The endpoint does not return token grants or bearer material and does not accept tenant selectors in
-headers or query parameters. Shared runtimes reject anonymous, operator, tenant-admin, bootstrap,
+The endpoint is persistent runtime-token introspection for Control Center credential assertion. It
+does not return token grants or bearer material, and it rejects tenant selectors in headers, query
+parameters, or a request body. JWT-derived principals are not introspectable and never produce a
+synthetic `jwt:*` credential ID. Shared runtimes reject anonymous, operator, tenant-admin, bootstrap,
 invalid, revoked, and disabled-tenant credentials. Non-shared runtimes retain their existing
 bootstrap and local-open compatibility principals.
 

@@ -152,7 +152,7 @@ describe("action execution OpenAPI", () => {
   it("documents runtime principal introspection without tenant selectors or secret fields", () => {
     const document = createOpenApiDocument([provider]);
     const path = document.paths["/v1/principal"] as {
-      get: { parameters?: unknown[]; responses: Record<string, unknown> };
+      get: { description: string; parameters?: unknown[]; requestBody?: unknown; responses: Record<string, unknown> };
     };
     const schema = document.components.schemas.RuntimePrincipal as {
       required: string[];
@@ -161,6 +161,9 @@ describe("action execution OpenAPI", () => {
     };
 
     expect(path.get.parameters).toBeUndefined();
+    expect(path.get.requestBody).toBeUndefined();
+    expect(path.get.description).toContain("persistent tenant runtime token");
+    expect(path.get.description).toContain("JWT principals are not introspectable");
     expect(path.get.responses).toHaveProperty("200");
     expect(path.get.responses).toHaveProperty("400");
     expect(path.get.responses).toHaveProperty("401");

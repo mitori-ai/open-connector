@@ -96,6 +96,10 @@ describe("shared runtime tenant isolation", () => {
       sharedRuntime: true,
       adminToken: "operator-secret",
       runtimeToken: "bootstrap-secret",
+      verifyRuntimeJwt: async (token) =>
+        token === "jwt-a"
+          ? { kind: "tenant", capability: "runtime", tenantId: tenantA, runtimeTokenId: "jwt:a" }
+          : undefined,
     });
     const authorization = { authorization: `Bearer ${runtime.token}` };
 
@@ -123,7 +127,13 @@ describe("shared runtime tenant isolation", () => {
     expect((await app.request("/v1/principal", { headers: { authorization: "Bearer bootstrap-secret" } })).status).toBe(
       401,
     );
+    const jwtResponse = await app.request("/v1/principal", {
+      headers: { authorization: "Bearer jwt-a" },
+    });
+    expect(jwtResponse.status).toBe(401);
+    expect(await jwtResponse.text()).not.toContain("jwt:a");
     expect((await app.request(`/v1/principal?tenantId=${tenantB}`, { headers: authorization })).status).toBe(400);
+    expect((await app.request(`/v1/principal?tenant_id=${tenantB}`, { headers: authorization })).status).toBe(400);
     expect(
       (
         await app.request("/v1/principal", {
@@ -131,6 +141,21 @@ describe("shared runtime tenant isolation", () => {
         })
       ).status,
     ).toBe(400);
+    expect(
+      (
+        await app.request("/v1/principal", {
+          headers: { ...authorization, tenant_id: tenantB },
+        })
+      ).status,
+    ).toBe(400);
+    const requestWithBody = new Request("http://localhost/v1/principal", {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ tenantId: tenantB }),
+    });
+    // Server adapters can expose GET bodies even though the Fetch constructor does not create them.
+    Object.defineProperty(requestWithBody, "method", { value: "GET" });
+    expect((await app.fetch(requestWithBody)).status).toBe(400);
 
     await database.tenantCredentialStore.disableTenant(tenantA, new Date().toISOString());
     expect((await app.request("/v1/principal", { headers: authorization })).status).toBe(401);
