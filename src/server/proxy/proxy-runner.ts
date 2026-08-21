@@ -1,12 +1,14 @@
 import type { CatalogStore } from "../../catalog-store.ts";
 import type { ConnectionService } from "../../connection-service.ts";
 import type { ActionPolicyService, ActionPolicySnapshot } from "../../core/action-policy.ts";
+import type { TenantId } from "../../core/tenant.ts";
 import type { ProviderProxyExecutor, ProxyRequestInput, ProxyResponse } from "../../core/types.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
 import type { Logger } from "../logger.ts";
 
 import { ConnectionError } from "../../connection-service.ts";
 import { optionalRecord, requiredRecord, requiredString } from "../../core/cast.ts";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { mapConnectionErrorStatus } from "../api/runtime-api.ts";
 
 export type ProxyFailureStatus = 400 | 403 | 404 | 409 | 413 | 429 | 500 | 501;
@@ -20,6 +22,7 @@ export interface ProxyRunnerOptions {
 }
 
 export interface RunProxyInput {
+  tenantId?: TenantId;
   service: string;
   input: unknown;
   connectionName?: string;
@@ -56,6 +59,7 @@ export class ProxyRunner {
   }
 
   async run(input: RunProxyInput): Promise<ProxyRunResult> {
+    const tenantId = input.tenantId ?? compatibilityTenantId;
     const provider = this.options.catalog.providers.find((candidate) => candidate.service === input.service);
     if (!provider) {
       return {
@@ -114,7 +118,11 @@ export class ProxyRunner {
     };
     const startedAtMs = Date.now();
     try {
-      const connection = await this.options.connections.getConnectionSummary(provider.service, input.connectionName);
+      const connection = await this.options.connections.getConnectionSummary(
+        provider.service,
+        input.connectionName,
+        tenantId,
+      );
       const connectionDecision =
         connection?.authType === "no_auth" ? undefined : snapshot?.evaluateConnection(connection?.id);
       if (connectionDecision && !connectionDecision.allowed) {
@@ -127,8 +135,11 @@ export class ProxyRunner {
         };
       }
       this.options.logger?.info(logContext, "proxy request started");
+      const credentials = input.tenantId
+        ? this.options.connections.forConnection(input.connectionName, tenantId)
+        : this.options.connections.forConnection(input.connectionName);
       const result = await executor(request.input, {
-        ...this.options.connections.forConnection(input.connectionName),
+        ...credentials,
       });
       const durationMs = Date.now() - startedAtMs;
       if (result.ok) {

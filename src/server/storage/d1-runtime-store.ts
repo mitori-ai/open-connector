@@ -1,5 +1,6 @@
 import type { IConnectionStore, StoredConnection } from "../../connection-service.ts";
 import type { TokenPolicy } from "../../core/action-policy.ts";
+import type { TenantId } from "../../core/tenant.ts";
 import type { ResolvedCredential } from "../../core/types.ts";
 import type { IOAuthClientConfigStore, OAuthClientConfig } from "../../oauth/oauth-client-config-service.ts";
 import type { IOAuthStateStore, OAuthAuthorizationState } from "../../oauth/oauth-flow-service.ts";
@@ -15,7 +16,9 @@ import type { RuntimeDatabase } from "./runtime-database.ts";
 import type { IRuntimePolicyStore, RuntimePolicyRecord } from "./runtime-policy-store.ts";
 import type { IRunLogStore, RunLog, RunLogListInput, RunLogPage, RunLogWriteResult } from "./runtime-store.ts";
 import type { IRuntimeTokenStore, RuntimeTokenRecord } from "./runtime-token-service.ts";
+import type { ITenantCredentialStore, TenantAdminCredentialRecord, TenantRecord } from "./tenant-credential-service.ts";
 
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { parseRuntimeActionHttpResult } from "../api/runtime-api.ts";
 import { PlainTextSecretCodec } from "../secrets/secret-codec-core.ts";
 import { DEFAULT_RUN_LIMIT, decodeRunLogCursor, encodeRunLogCursor } from "./runtime-store.ts";
@@ -36,6 +39,7 @@ export class D1RuntimeDatabase implements RuntimeDatabase {
   readonly runtimePolicyStore: D1RuntimePolicyStore;
   readonly runLogStore: D1RunLogStore;
   readonly idempotencyStore: D1IdempotencyStore;
+  readonly tenantCredentialStore: D1TenantCredentialStore;
 
   constructor(database: D1DatabaseBinding, options: D1RuntimeDatabaseOptions = {}) {
     const secretCodec = options.secretCodec ?? new PlainTextSecretCodec();
@@ -46,6 +50,7 @@ export class D1RuntimeDatabase implements RuntimeDatabase {
     this.runtimePolicyStore = new D1RuntimePolicyStore(database);
     this.runLogStore = new D1RunLogStore(database, options.runLimit ?? DEFAULT_RUN_LIMIT);
     this.idempotencyStore = new D1IdempotencyStore(database, secretCodec);
+    this.tenantCredentialStore = new D1TenantCredentialStore(database);
   }
 }
 
@@ -58,10 +63,16 @@ export class D1ConnectionStore implements IConnectionStore {
     this.secretCodec = secretCodec;
   }
 
-  async get(service: string, connectionName: string): Promise<StoredConnection | undefined> {
+  async get(
+    service: string,
+    connectionName: string,
+    tenantId: TenantId = compatibilityTenantId,
+  ): Promise<StoredConnection | undefined> {
     const row = await this.database
-      .prepare("select id, revision, value from connections where service = ? and connection_name = ?")
-      .bind(service, connectionName)
+      .prepare(
+        "select id, revision, value from connections where tenant_id = ? and service = ? and connection_name = ?",
+      )
+      .bind(tenantId, service, connectionName)
       .first<RuntimeRow>();
     return row
       ? {
@@ -74,13 +85,18 @@ export class D1ConnectionStore implements IConnectionStore {
       : undefined;
   }
 
-  async set(service: string, connectionName: string, credential: ResolvedCredential): Promise<StoredConnection> {
+  async set(
+    service: string,
+    connectionName: string,
+    credential: ResolvedCredential,
+    tenantId: TenantId = compatibilityTenantId,
+  ): Promise<StoredConnection> {
     const row = await this.database
       .prepare(
         `
-        insert into connections (id, revision, service, connection_name, value, updated_at)
-        values (?, ?, ?, ?, ?, ?)
-        on conflict(service, connection_name) do update set
+        insert into connections (id, revision, tenant_id, service, connection_name, value, updated_at)
+        values (?, ?, ?, ?, ?, ?, ?)
+        on conflict(tenant_id, service, connection_name) do update set
           revision = excluded.revision,
           value = excluded.value,
           updated_at = excluded.updated_at
@@ -90,6 +106,7 @@ export class D1ConnectionStore implements IConnectionStore {
       .bind(
         crypto.randomUUID(),
         crypto.randomUUID(),
+        tenantId,
         service,
         connectionName,
         await this.secretCodec.encode(JSON.stringify(credential)),
@@ -105,13 +122,13 @@ export class D1ConnectionStore implements IConnectionStore {
     };
   }
 
-  async updateCredential(input: StoredConnection): Promise<boolean> {
+  async updateCredential(input: StoredConnection, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
     const row = await this.database
       .prepare(
         `
         update connections
         set revision = ?, value = ?, updated_at = ?
-        where service = ? and connection_name = ? and id = ? and revision = ?
+        where tenant_id = ? and service = ? and connection_name = ? and id = ? and revision = ?
         returning id
       `,
       )
@@ -119,6 +136,7 @@ export class D1ConnectionStore implements IConnectionStore {
         crypto.randomUUID(),
         await this.secretCodec.encode(JSON.stringify(input.credential)),
         new Date().toISOString(),
+        tenantId,
         input.service,
         input.connectionName,
         input.id,
@@ -128,18 +146,19 @@ export class D1ConnectionStore implements IConnectionStore {
     return row !== null;
   }
 
-  async delete(service: string, connectionName: string): Promise<void> {
+  async delete(service: string, connectionName: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
     await this.database
-      .prepare("delete from connections where service = ? and connection_name = ?")
-      .bind(service, connectionName)
+      .prepare("delete from connections where tenant_id = ? and service = ? and connection_name = ?")
+      .bind(tenantId, service, connectionName)
       .run();
   }
 
-  async list(): Promise<StoredConnection[]> {
+  async list(tenantId: TenantId = compatibilityTenantId): Promise<StoredConnection[]> {
     const { results } = await this.database
       .prepare(
-        "select id, revision, service, connection_name, value from connections order by service, connection_name",
+        "select id, revision, service, connection_name, value from connections where tenant_id = ? order by service, connection_name",
       )
+      .bind(tenantId)
       .all<RuntimeRow>();
     return await Promise.all(
       results.map(async (row) => ({
@@ -149,6 +168,15 @@ export class D1ConnectionStore implements IConnectionStore {
         connectionName: readString(row, "connection_name"),
         credential: parseJson<ResolvedCredential>(await this.secretCodec.decode(readString(row, "value"))),
       })),
+    );
+  }
+
+  async ownsConnection(connectionId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+    return Boolean(
+      await this.database
+        .prepare("select 1 from connections where tenant_id = ? and id = ?")
+        .bind(tenantId, connectionId)
+        .first(),
     );
   }
 }
@@ -206,12 +234,17 @@ export class D1OAuthStateStore implements IOAuthStateStore {
     await this.database
       .prepare(
         `
-        insert into oauth_states (state, value, created_at)
-        values (?, ?, ?)
-        on conflict(state) do update set value = excluded.value, created_at = excluded.created_at
+        insert into oauth_states (state, tenant_id, value, created_at)
+        values (?, ?, ?, ?)
+        on conflict(state) do update set tenant_id = excluded.tenant_id, value = excluded.value, created_at = excluded.created_at
       `,
       )
-      .bind(state.state, await this.secretCodec.encode(JSON.stringify(state)), state.createdAt)
+      .bind(
+        state.state,
+        state.tenantId ?? compatibilityTenantId,
+        await this.secretCodec.encode(JSON.stringify(state)),
+        state.createdAt,
+      )
       .run();
   }
 
@@ -233,18 +266,25 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
     this.database = database;
   }
 
+  async hasActiveToken(): Promise<boolean> {
+    return Boolean(
+      await this.database.prepare("select 1 from runtime_tokens where revoked_at is null limit 1").first(),
+    );
+  }
+
   async add(record: RuntimeTokenRecord): Promise<void> {
     await this.database
       .prepare(
         `
         insert into runtime_tokens (
-          id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+          id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .bind(
         record.id,
+        record.tenantId ?? compatibilityTenantId,
         record.name,
         record.tokenHash,
         JSON.stringify(record.allowedActions),
@@ -257,16 +297,17 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
       .run();
   }
 
-  async list(): Promise<RuntimeTokenRecord[]> {
+  async list(tenantId: TenantId = compatibilityTenantId): Promise<RuntimeTokenRecord[]> {
     const { results } = await this.database
       .prepare(
         `
-        select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        select id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
         from runtime_tokens
-        where revoked_at is null
+        where tenant_id = ? and revoked_at is null
         order by created_at desc, id desc
       `,
       )
+      .bind(tenantId)
       .all<RuntimeRow>();
     return results.map(readRuntimeTokenRow);
   }
@@ -275,7 +316,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
     const row = await this.database
       .prepare(
         `
-        select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        select id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
         from runtime_tokens
         where token_hash = ? and revoked_at is null
       `,
@@ -285,14 +326,18 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async updatePolicy(id: string, policy: TokenPolicy): Promise<RuntimeTokenRecord | undefined> {
+  async updatePolicy(
+    id: string,
+    policy: TokenPolicy,
+    tenantId: TenantId = compatibilityTenantId,
+  ): Promise<RuntimeTokenRecord | undefined> {
     const row = await this.database
       .prepare(
         `
         update runtime_tokens
         set allowed_actions = ?, blocked_actions = ?, allowed_proxies = ?, allowed_connections = ?
-        where id = ? and revoked_at is null
-        returning id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
+        where tenant_id = ? and id = ? and revoked_at is null
+        returning id, tenant_id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at
       `,
       )
       .bind(
@@ -300,21 +345,25 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
         JSON.stringify(policy.blockedActions),
         JSON.stringify(policy.allowedProxies),
         JSON.stringify(policy.allowedConnections ?? []),
+        tenantId,
         id,
       )
       .first<RuntimeRow>();
     return row ? readRuntimeTokenRow(row) : undefined;
   }
 
-  async revoke(id: string): Promise<boolean> {
-    const result = await this.database.prepare("delete from runtime_tokens where id = ?").bind(id).run();
+  async revoke(id: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
+    const result = await this.database
+      .prepare("delete from runtime_tokens where tenant_id = ? and id = ?")
+      .bind(tenantId, id)
+      .run();
     return (result.meta.changes ?? 0) > 0;
   }
 
-  async markUsed(id: string, usedAt: string): Promise<void> {
+  async markUsed(id: string, usedAt: string, tenantId: TenantId = compatibilityTenantId): Promise<void> {
     await this.database
-      .prepare("update runtime_tokens set last_used_at = ? where id = ? and revoked_at is null")
-      .bind(usedAt, id)
+      .prepare("update runtime_tokens set last_used_at = ? where tenant_id = ? and id = ? and revoked_at is null")
+      .bind(usedAt, tenantId, id)
       .run();
   }
 }
@@ -322,6 +371,7 @@ export class D1RuntimeTokenStore implements IRuntimeTokenStore {
 function readRuntimeTokenRow(row: RuntimeRow): RuntimeTokenRecord {
   return {
     id: readString(row, "id"),
+    tenantId: readString(row, "tenant_id") as TenantId,
     name: readString(row, "name"),
     tokenHash: readString(row, "token_hash"),
     allowedActions: parseJson(readString(row, "allowed_actions")),
@@ -330,6 +380,125 @@ function readRuntimeTokenRow(row: RuntimeRow): RuntimeTokenRecord {
     allowedConnections: parseJson(readOptionalString(row, "allowed_connections") ?? "[]"),
     createdAt: readString(row, "created_at"),
     lastUsedAt: readOptionalString(row, "last_used_at"),
+  };
+}
+
+export class D1TenantCredentialStore implements ITenantCredentialStore {
+  private readonly database: D1DatabaseBinding;
+
+  constructor(database: D1DatabaseBinding) {
+    this.database = database;
+  }
+
+  async hasActiveCredential(): Promise<boolean> {
+    return Boolean(
+      await this.database.prepare("select 1 from tenant_admin_credentials where revoked_at is null limit 1").first(),
+    );
+  }
+
+  async createTenant(record: TenantRecord): Promise<void> {
+    await this.database
+      .prepare("insert into tenants (id, display_name, created_at, disabled_at) values (?, ?, ?, ?)")
+      .bind(record.id, record.displayName, record.createdAt, record.disabledAt ?? null)
+      .run();
+  }
+
+  async getTenant(tenantId: TenantId): Promise<TenantRecord | undefined> {
+    const row = await this.database
+      .prepare("select id, display_name, created_at, disabled_at from tenants where id = ?")
+      .bind(tenantId)
+      .first<RuntimeRow>();
+    return row ? readTenantRow(row) : undefined;
+  }
+
+  async listTenants(): Promise<TenantRecord[]> {
+    const rows = await this.database
+      .prepare("select id, display_name, created_at, disabled_at from tenants order by created_at, id")
+      .all<RuntimeRow>();
+    return rows.results.map(readTenantRow);
+  }
+
+  async disableTenant(tenantId: TenantId, disabledAt: string): Promise<boolean> {
+    const result = await this.database
+      .prepare("update tenants set disabled_at = ? where id = ?")
+      .bind(disabledAt, tenantId)
+      .run();
+    return (result.meta.changes ?? 0) > 0;
+  }
+
+  async addCredential(record: TenantAdminCredentialRecord): Promise<void> {
+    await this.database
+      .prepare(
+        "insert into tenant_admin_credentials (id, tenant_id, name, token_hash, created_at, last_used_at, revoked_at) values (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(
+        record.id,
+        record.tenantId,
+        record.name,
+        record.tokenHash,
+        record.createdAt,
+        record.lastUsedAt ?? null,
+        record.revokedAt ?? null,
+      )
+      .run();
+  }
+
+  async findCredentialByHash(tokenHash: string): Promise<TenantAdminCredentialRecord | undefined> {
+    const row = await this.database
+      .prepare(
+        "select id, tenant_id, name, token_hash, created_at, last_used_at, revoked_at from tenant_admin_credentials where token_hash = ? and revoked_at is null",
+      )
+      .bind(tokenHash)
+      .first<RuntimeRow>();
+    return row ? readTenantCredentialRow(row) : undefined;
+  }
+
+  async listCredentials(tenantId: TenantId): Promise<TenantAdminCredentialRecord[]> {
+    const rows = await this.database
+      .prepare(
+        "select id, tenant_id, name, token_hash, created_at, last_used_at, revoked_at from tenant_admin_credentials where tenant_id = ? order by created_at desc",
+      )
+      .bind(tenantId)
+      .all<RuntimeRow>();
+    return rows.results.map(readTenantCredentialRow);
+  }
+
+  async revokeCredential(tenantId: TenantId, credentialId: string, revokedAt: string): Promise<boolean> {
+    const result = await this.database
+      .prepare(
+        "update tenant_admin_credentials set revoked_at = ? where tenant_id = ? and id = ? and revoked_at is null",
+      )
+      .bind(revokedAt, tenantId, credentialId)
+      .run();
+    return (result.meta.changes ?? 0) > 0;
+  }
+
+  async markCredentialUsed(credentialId: string, usedAt: string): Promise<void> {
+    await this.database
+      .prepare("update tenant_admin_credentials set last_used_at = ? where id = ? and revoked_at is null")
+      .bind(usedAt, credentialId)
+      .run();
+  }
+}
+
+function readTenantRow(row: RuntimeRow): TenantRecord {
+  return {
+    id: readString(row, "id") as TenantId,
+    displayName: readString(row, "display_name"),
+    createdAt: readString(row, "created_at"),
+    disabledAt: readOptionalString(row, "disabled_at"),
+  };
+}
+
+function readTenantCredentialRow(row: RuntimeRow): TenantAdminCredentialRecord {
+  return {
+    id: readString(row, "id"),
+    tenantId: readString(row, "tenant_id") as TenantId,
+    name: readString(row, "name"),
+    tokenHash: readString(row, "token_hash"),
+    createdAt: readString(row, "created_at"),
+    lastUsedAt: readOptionalString(row, "last_used_at"),
+    revokedAt: readOptionalString(row, "revoked_at"),
   };
 }
 
@@ -382,21 +551,30 @@ export class D1IdempotencyStore implements IIdempotencyStore {
       .prepare(
         `
         insert into idempotency_records (
-          key_hash, claim_id, request_hash, state, response_value, created_at, expires_at
+          tenant_id, key_hash, claim_id, request_hash, state, response_value, created_at, expires_at
         )
-        values (?, ?, ?, 'in_progress', null, ?, ?)
-        on conflict(key_hash) do nothing
+        values (?, ?, ?, ?, 'in_progress', null, ?, ?)
+        on conflict(tenant_id, key_hash) do nothing
       `,
       )
-      .bind(input.keyHash, input.claimId, input.requestHash, input.now, input.expiresAt)
+      .bind(
+        input.tenantId ?? compatibilityTenantId,
+        input.keyHash,
+        input.claimId,
+        input.requestHash,
+        input.now,
+        input.expiresAt,
+      )
       .run();
     if ((inserted.meta.changes ?? 0) > 0) {
       return { kind: "acquired" };
     }
 
     const row = await this.database
-      .prepare("select request_hash, state, response_value from idempotency_records where key_hash = ?")
-      .bind(input.keyHash)
+      .prepare(
+        "select request_hash, state, response_value from idempotency_records where tenant_id = ? and key_hash = ?",
+      )
+      .bind(input.tenantId ?? compatibilityTenantId, input.keyHash)
       .first<RuntimeRow>();
     if (!row) {
       throw new Error("Idempotency record disappeared while claiming it.");
@@ -420,7 +598,8 @@ export class D1IdempotencyStore implements IIdempotencyStore {
         `
         update idempotency_records
         set state = 'completed', response_value = ?, expires_at = ?
-        where key_hash = ?
+        where tenant_id = ?
+          and key_hash = ?
           and claim_id = ?
           and request_hash = ?
           and state = 'in_progress'
@@ -429,6 +608,7 @@ export class D1IdempotencyStore implements IIdempotencyStore {
       .bind(
         await this.secretCodec.encode(JSON.stringify(input.response)),
         input.expiresAt,
+        input.tenantId ?? compatibilityTenantId,
         input.keyHash,
         input.claimId,
         input.requestHash,
@@ -447,14 +627,15 @@ export class D1RunLogStore implements IRunLogStore {
     this.limit = limit;
   }
 
-  async add(run: RunLog): Promise<RunLogWriteResult> {
+  async add(run: RunLog, tenantId: TenantId = compatibilityTenantId): Promise<RunLogWriteResult> {
     await this.database
       .prepare(
         `
-        insert into runs (id, service, action_id, caller, started_at, completed_at, ok, value)
-        values (?, ?, ?, ?, ?, ?, ?, ?)
+        insert into runs (id, tenant_id, service, action_id, caller, started_at, completed_at, ok, value)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
         on conflict(id) do update set
           service = excluded.service,
+          tenant_id = excluded.tenant_id,
           action_id = excluded.action_id,
           caller = excluded.caller,
           started_at = excluded.started_at,
@@ -465,6 +646,7 @@ export class D1RunLogStore implements IRunLogStore {
       )
       .bind(
         run.id,
+        tenantId,
         run.service,
         run.actionId,
         run.caller,
@@ -481,13 +663,13 @@ export class D1RunLogStore implements IRunLogStore {
           `
           delete from runs
           where id in (
-            select id from runs
+            select id from runs where tenant_id = ?
             order by started_at desc, id desc
             limit -1 offset ?
           )
         `,
         )
-        .bind(this.limit)
+        .bind(tenantId, this.limit)
         .run();
       return { retentionApplied: true };
     } catch {
@@ -495,19 +677,19 @@ export class D1RunLogStore implements IRunLogStore {
     }
   }
 
-  async get(id: string): Promise<RunLog | undefined> {
+  async get(id: string, tenantId: TenantId = compatibilityTenantId): Promise<RunLog | undefined> {
     const row = await this.database
-      .prepare("select service, value from runs where id = ?")
-      .bind(id)
+      .prepare("select service, value from runs where tenant_id = ? and id = ?")
+      .bind(tenantId, id)
       .first<RuntimeRow>();
     return row ? readRunLogRow(row) : undefined;
   }
 
-  async list(input: RunLogListInput = {}): Promise<RunLogPage> {
+  async list(input: RunLogListInput = {}, tenantId: TenantId = compatibilityTenantId): Promise<RunLogPage> {
     const limit = Math.max(1, Math.min(input.limit ?? this.limit, this.limit));
     const cursor = decodeRunLogCursor(input.cursor);
-    const conditions: string[] = [];
-    const values: Array<string | number> = [];
+    const conditions: string[] = ["tenant_id = ?"];
+    const values: Array<string | number> = [tenantId];
     if (cursor) {
       conditions.push("(started_at < ? or (started_at = ? and id < ?))");
       values.push(cursor.startedAt, cursor.startedAt, cursor.id);

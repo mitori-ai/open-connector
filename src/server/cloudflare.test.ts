@@ -233,6 +233,12 @@ function memoryAssets(files: Record<string, unknown>): AssetsBinding {
 class RuntimeTokenListOnlyD1Database implements D1DatabaseBinding {
   prepare(query: string): D1PreparedStatementBinding {
     const normalizedQuery = query.replace(/\s+/g, " ").trim();
+    if (
+      normalizedQuery === "select 1 from runtime_tokens where revoked_at is null limit 1" ||
+      normalizedQuery === "select 1 from tenant_admin_credentials where revoked_at is null limit 1"
+    ) {
+      return new EmptyExistsStatement();
+    }
     const runtimeTokenListQuery = [
       "select id, name, token_hash, allowed_actions, blocked_actions, allowed_proxies, allowed_connections, created_at, last_used_at",
       "from runtime_tokens",
@@ -243,6 +249,24 @@ class RuntimeTokenListOnlyD1Database implements D1DatabaseBinding {
       return new EmptyRuntimeTokenListStatement();
     }
     throw new Error(`Unexpected D1 query: ${query}`);
+  }
+}
+
+class EmptyExistsStatement implements D1PreparedStatementBinding {
+  bind(): D1PreparedStatementBinding {
+    return this;
+  }
+
+  async first<T = Record<string, unknown>>(): Promise<T | null> {
+    return null;
+  }
+
+  async all<T = Record<string, unknown>>(): Promise<{ results: T[] }> {
+    throw new Error("Unexpected all() call on an existence query");
+  }
+
+  async run(): Promise<{ success: boolean; meta: { changes?: number } }> {
+    throw new Error("Unexpected run() call on an existence query");
   }
 }
 

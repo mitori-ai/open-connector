@@ -1,8 +1,11 @@
+import type { AuthenticatedPrincipal } from "../../core/tenant.ts";
 import type { RuntimeGrant } from "../storage/runtime-token-service.ts";
+import type { TenantCredentialService } from "../storage/tenant-credential-service.ts";
 import type { RuntimeJwtVerifier } from "./runtime-jwt.ts";
 import type { Context, MiddlewareHandler } from "hono";
 
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { compatibilityTenantId, operatorPrincipal } from "../../core/tenant.ts";
 import { isConsoleShellRequest } from "./console-paths.ts";
 import { jsonError } from "./http-utils.ts";
 
@@ -18,8 +21,11 @@ const authCookieMaxAgeMs = authCookieMaxAgeSeconds * 1000;
 export interface LocalAuthOptions {
   adminToken?: string;
   runtimeToken?: string;
+  sharedRuntime?: boolean;
   hasRuntimeTokens?(): Promise<boolean>;
+  hasTenantAdminCredentials?(): Promise<boolean>;
   resolveRuntimeToken?(token: string): Promise<RuntimeGrant | undefined>;
+  tenantCredentials?: TenantCredentialService;
   verifyRuntimeJwt?: RuntimeJwtVerifier;
 }
 
@@ -28,12 +34,17 @@ export interface LocalAuthSession {
   authenticated: boolean;
 }
 
-type AuthScope = "admin" | "runtime";
+type AuthScope = "operator" | "tenant" | "tenant-admin" | "runtime";
 
 const runtimeGrants = new WeakMap<Request, RuntimeGrant>();
+const principals = new WeakMap<Request, AuthenticatedPrincipal>();
 
 export function readRuntimeGrant(context: Context): RuntimeGrant | undefined {
   return runtimeGrants.get(context.req.raw);
+}
+
+export function readAuthenticatedPrincipal(context: Context): AuthenticatedPrincipal | undefined {
+  return principals.get(context.req.raw);
 }
 
 export function createLocalAuthMiddleware(options: LocalAuthOptions): MiddlewareHandler {
@@ -43,8 +54,11 @@ export function createLocalAuthMiddleware(options: LocalAuthOptions): Middleware
     !adminToken &&
     !runtimeToken &&
     !options.hasRuntimeTokens &&
+    !options.hasTenantAdminCredentials &&
     !options.resolveRuntimeToken &&
-    !options.verifyRuntimeJwt
+    !options.tenantCredentials &&
+    !options.verifyRuntimeJwt &&
+    !options.sharedRuntime
   ) {
     return async (_context, next) => {
       await next();
@@ -58,8 +72,10 @@ export function createLocalAuthMiddleware(options: LocalAuthOptions): Middleware
       return;
     }
 
-    if (await hasValidToken(context, options, scope)) {
-      if (scope === "admin") {
+    const principal = await resolvePrincipal(context, options, scope);
+    if (principal) {
+      principals.set(context.req.raw, principal);
+      if (scope === "operator") {
         await installAdminCookieForBearer(context, options);
       }
       await next();
@@ -72,7 +88,7 @@ export function createLocalAuthMiddleware(options: LocalAuthOptions): Middleware
     if (
       canUseAdminAuth(context.req.path, context.req.method) &&
       normalizeToken(options.adminToken) &&
-      (await hasValidToken(context, options, "admin"))
+      (await resolvePrincipal(context, options, "operator"))
     ) {
       await installAdminCookieForBearer(context, options);
       await next();
@@ -105,7 +121,6 @@ function isPublicPath(path: string, method: string): boolean {
     path.startsWith("/oauth/callback/") ||
     (method === "GET" && path === "/api/auth/session") ||
     (method === "POST" && path === "/api/auth/logout") ||
-    (method === "GET" && path.startsWith("/api/files/")) ||
     isConsoleShellRequest(path, method)
   );
 }
@@ -143,26 +158,82 @@ async function installAdminCookieForBearer(context: Context, options: LocalAuthO
   }
 }
 
-async function hasValidToken(context: Context, options: LocalAuthOptions, scope: AuthScope): Promise<boolean> {
+async function resolvePrincipal(
+  context: Context,
+  options: LocalAuthOptions,
+  scope: AuthScope,
+): Promise<AuthenticatedPrincipal | undefined> {
+  if (scope === "tenant") {
+    const token = readBearerToken(context);
+    const tenantAdmin = token ? await options.tenantCredentials?.resolveAdminCredential(token) : undefined;
+    if (tenantAdmin) {
+      return {
+        kind: "tenant",
+        capability: "tenant-admin",
+        tenantId: tenantAdmin.tenantId,
+        credentialId: tenantAdmin.id,
+      };
+    }
+    const runtime = await resolveRuntimePrincipal(context, options);
+    if (runtime) return runtime;
+    const adminToken = normalizeToken(options.adminToken);
+    if (adminToken && (await hasRequestToken(context, adminToken))) return operatorPrincipal;
+    const hasRuntimeTokens = options.hasRuntimeTokens
+      ? await options.hasRuntimeTokens()
+      : options.resolveRuntimeToken !== undefined;
+    const hasTenantAdminCredentials = options.hasTenantAdminCredentials
+      ? await options.hasTenantAdminCredentials()
+      : options.tenantCredentials !== undefined;
+    if (
+      !adminToken &&
+      !normalizeToken(options.runtimeToken) &&
+      !hasRuntimeTokens &&
+      !hasTenantAdminCredentials &&
+      !options.verifyRuntimeJwt &&
+      !options.sharedRuntime
+    ) {
+      return {
+        kind: "tenant",
+        capability: "runtime",
+        tenantId: compatibilityTenantId,
+        runtimeTokenId: "local-open",
+      };
+    }
+    return undefined;
+  }
+  if (scope === "tenant-admin") {
+    const token = readBearerToken(context);
+    const record = token ? await options.tenantCredentials?.resolveAdminCredential(token) : undefined;
+    return record
+      ? { kind: "tenant", capability: "tenant-admin", tenantId: record.tenantId, credentialId: record.id }
+      : undefined;
+  }
   const token = tokenForScope(options, scope);
   if (!token) {
-    if (scope === "admin") {
-      return true;
+    if (scope === "operator") {
+      return operatorPrincipal;
     }
     const hasRuntimeTokens = options.hasRuntimeTokens
       ? await options.hasRuntimeTokens()
       : options.resolveRuntimeToken !== undefined;
-    if (!hasRuntimeTokens && !options.verifyRuntimeJwt) {
-      return true;
+    if (!hasRuntimeTokens && !options.verifyRuntimeJwt && !options.sharedRuntime) {
+      return {
+        kind: "tenant",
+        capability: "runtime",
+        tenantId: compatibilityTenantId,
+        runtimeTokenId: "local-open",
+      };
     }
-    return hasValidRuntimeToken(context, options);
+    return resolveRuntimePrincipal(context, options);
   }
 
   if (await hasRequestToken(context, token)) {
-    return true;
+    return scope === "operator"
+      ? operatorPrincipal
+      : { kind: "tenant", capability: "runtime", tenantId: compatibilityTenantId, runtimeTokenId: "bootstrap" };
   }
 
-  return scope === "runtime" ? await hasValidRuntimeToken(context, options) : false;
+  return scope === "runtime" ? await resolveRuntimePrincipal(context, options) : undefined;
 }
 
 async function hasRequestToken(context: Context, token: string): Promise<boolean> {
@@ -237,7 +308,11 @@ function normalizeToken(token: string | undefined): string | undefined {
 }
 
 function readAuthScope(path: string): AuthScope {
-  return path === "/mcp" || path.startsWith("/mcp/") || path === "/v1" || path.startsWith("/v1/") ? "runtime" : "admin";
+  if (path.startsWith("/api/tenant")) return "tenant-admin";
+  if (path === "/api/files" || path.startsWith("/api/files/")) return "tenant";
+  return path === "/mcp" || path.startsWith("/mcp/") || path === "/v1" || path.startsWith("/v1/")
+    ? "runtime"
+    : "operator";
 }
 
 function canUseAdminAuth(path: string, method: string): boolean {
@@ -247,20 +322,43 @@ function canUseAdminAuth(path: string, method: string): boolean {
 function tokenForScope(options: LocalAuthOptions, scope: AuthScope): string | undefined {
   const adminToken = normalizeToken(options.adminToken);
   const runtimeToken = normalizeToken(options.runtimeToken);
-  return scope === "runtime" ? runtimeToken : adminToken;
+  return scope === "runtime" ? runtimeToken : scope === "operator" ? adminToken : undefined;
 }
 
-async function hasValidRuntimeToken(context: Context, options: LocalAuthOptions): Promise<boolean> {
+async function resolveRuntimePrincipal(
+  context: Context,
+  options: LocalAuthOptions,
+): Promise<AuthenticatedPrincipal | undefined> {
   const token = readBearerToken(context);
   if (!token) {
-    return false;
+    return undefined;
   }
   const grant = await options.resolveRuntimeToken?.(token);
-  if (grant) {
+  if (grant && (await isTenantActive(options, grant.tenantId ?? compatibilityTenantId))) {
     runtimeGrants.set(context.req.raw, grant);
-    return true;
+    return {
+      kind: "tenant",
+      capability: "runtime",
+      tenantId: grant.tenantId ?? compatibilityTenantId,
+      runtimeTokenId: grant.tokenId,
+    };
   }
-  return await (options.verifyRuntimeJwt?.(token) ?? false);
+  const verified = await options.verifyRuntimeJwt?.(token);
+  if (verified === true) {
+    if (!(await isTenantActive(options, compatibilityTenantId))) return undefined;
+    return {
+      kind: "tenant",
+      capability: "runtime",
+      tenantId: compatibilityTenantId,
+      runtimeTokenId: "jwt:legacy",
+    };
+  }
+  if (!verified || !(await isTenantActive(options, verified.tenantId))) return undefined;
+  return verified;
+}
+
+async function isTenantActive(options: LocalAuthOptions, tenantId: typeof compatibilityTenantId): Promise<boolean> {
+  return options.tenantCredentials ? await options.tenantCredentials.isTenantActive(tenantId) : true;
 }
 
 function readBearerToken(context: Context): string | undefined {

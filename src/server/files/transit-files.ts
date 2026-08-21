@@ -1,3 +1,4 @@
+import type { TenantId } from "../../core/tenant.ts";
 import type {
   IStagedTransitFileService,
   StagedTransitFile,
@@ -12,6 +13,7 @@ import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:
 import { extname, join } from "node:path";
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { contentDispositionForFileName, contentTypeFromFileId, TransitFileError } from "./transit-file-store.ts";
 
 export interface TransitFileOptions {
@@ -22,6 +24,7 @@ export interface TransitFileOptions {
 }
 
 interface TransitFileMetadata {
+  tenantId: TenantId;
   name: string;
   mimeType: string;
 }
@@ -39,7 +42,7 @@ export class TransitFileService implements IStagedTransitFileService {
     this.maxBytes = options.maxBytes;
   }
 
-  async create(file: File): Promise<TransitFileUpload> {
+  async create(file: File, tenantId: TenantId = compatibilityTenantId): Promise<TransitFileUpload> {
     this.assertFileSize(file.size);
     await this.cleanupExpired();
     await mkdir(this.rootDir, { recursive: true });
@@ -50,6 +53,7 @@ export class TransitFileService implements IStagedTransitFileService {
     const sizeBytes = await this.writeFile(file, tempPath);
     await rename(tempPath, path);
     const metadata = normalizeMetadata({
+      tenantId,
       name: file.name || fileId,
       mimeType: file.type || contentTypeFromFileId(fileId),
     });
@@ -64,7 +68,10 @@ export class TransitFileService implements IStagedTransitFileService {
     };
   }
 
-  async createFromPath(file: StagedTransitFile): Promise<TransitFileUpload> {
+  async createFromPath(
+    file: StagedTransitFile,
+    tenantId: TenantId = compatibilityTenantId,
+  ): Promise<TransitFileUpload> {
     this.assertFileSize(file.sizeBytes);
     await this.cleanupExpired();
     await mkdir(this.rootDir, { recursive: true });
@@ -73,6 +80,7 @@ export class TransitFileService implements IStagedTransitFileService {
     const path = join(this.rootDir, fileId);
     await rename(file.path, path);
     const metadata = normalizeMetadata({
+      tenantId,
       name: file.name || fileId,
       mimeType: file.mimeType || contentTypeFromFileId(fileId),
     });
@@ -87,7 +95,7 @@ export class TransitFileService implements IStagedTransitFileService {
     };
   }
 
-  async read(fileId: string): Promise<TransitFileRead> {
+  async read(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<TransitFileRead> {
     assertSafeFileId(fileId);
     const path = join(this.rootDir, fileId);
     const stats = await stat(path).catch(() => undefined);
@@ -100,6 +108,7 @@ export class TransitFileService implements IStagedTransitFileService {
     }
 
     const metadata = await this.readMetadata(path, fileId);
+    assertTenantOwner(metadata, tenantId);
     return {
       file: new File([await readFile(path)], metadata.name, { type: metadata.mimeType }),
       sizeBytes: stats.size,
@@ -108,7 +117,7 @@ export class TransitFileService implements IStagedTransitFileService {
     };
   }
 
-  async response(fileId: string): Promise<Response> {
+  async response(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<Response> {
     assertSafeFileId(fileId);
     const path = join(this.rootDir, fileId);
     const stats = await stat(path).catch(() => undefined);
@@ -121,6 +130,7 @@ export class TransitFileService implements IStagedTransitFileService {
     }
 
     const metadata = await this.readMetadata(path, fileId);
+    assertTenantOwner(metadata, tenantId);
     return new Response(Readable.toWeb(createReadStream(path)) as ReadableStream, {
       headers: {
         "content-length": String(stats.size),
@@ -130,9 +140,11 @@ export class TransitFileService implements IStagedTransitFileService {
     });
   }
 
-  async delete(fileId: string): Promise<boolean> {
+  async delete(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
     assertSafeFileId(fileId);
     const path = join(this.rootDir, fileId);
+    const metadata = await this.readMetadata(path, fileId);
+    assertTenantOwner(metadata, tenantId);
     try {
       await unlink(path);
       await unlink(metadataPath(path)).catch(() => undefined);
@@ -162,7 +174,7 @@ export class TransitFileService implements IStagedTransitFileService {
   }
 
   private async readMetadata(path: string, fileId: string): Promise<TransitFileMetadata> {
-    const fallback = { name: fileId, mimeType: contentTypeFromFileId(fileId) };
+    const fallback = { tenantId: compatibilityTenantId, name: fileId, mimeType: contentTypeFromFileId(fileId) };
     const text = await readFile(metadataPath(path), "utf8").catch(() => undefined);
     if (!text) {
       return fallback;
@@ -239,10 +251,17 @@ function metadataPath(path: string): string {
 
 function normalizeMetadata(
   input: Partial<TransitFileMetadata>,
-  fallback: TransitFileMetadata = { name: "file", mimeType: "application/octet-stream" },
+  fallback: TransitFileMetadata = { tenantId: "" as TenantId, name: "file", mimeType: "application/octet-stream" },
 ): TransitFileMetadata {
   const name = typeof input.name === "string" && input.name.trim() ? input.name.trim() : fallback.name;
   const mimeType =
     typeof input.mimeType === "string" && input.mimeType.trim() ? input.mimeType.trim() : fallback.mimeType;
-  return { name, mimeType };
+  const tenantId = typeof input.tenantId === "string" ? (input.tenantId as TenantId) : fallback.tenantId;
+  return { tenantId, name, mimeType };
+}
+
+function assertTenantOwner(metadata: TransitFileMetadata, tenantId: TenantId): void {
+  if (metadata.tenantId !== tenantId) {
+    throw new TransitFileError(404, "file_not_found", "Transit file was not found.");
+  }
 }

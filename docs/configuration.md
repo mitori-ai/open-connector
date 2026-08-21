@@ -11,6 +11,7 @@ OpenConnector is configured with environment variables.
 | `OOMOL_CONNECT_DATABASE_URL`                | unset                     | PostgreSQL connection URL. When unset, the Node runtime uses SQLite under the data directory.       |
 | `OOMOL_CONNECT_DATABASE_POOL_MAX`           | `10`                      | Maximum PostgreSQL connections per Node runtime instance.                                           |
 | `OOMOL_CONNECT_DATABASE_CONNECT_TIMEOUT_MS` | `10000`                   | PostgreSQL connection timeout in milliseconds.                                                      |
+| `OOMOL_CONNECT_SHARED_RUNTIME`              | `false`                   | Enables fail-closed multi-tenant production checks.                                                 |
 | `OOMOL_CONNECT_ENCRYPTION_KEY`              | unset                     | Encrypts credentials, OAuth config, pending OAuth state, and completed idempotent Action responses. |
 | `OOMOL_CONNECT_NEW_ENCRYPTION_KEY`          | unset                     | New key used by `runtime:data rotate-key`.                                                          |
 | `OOMOL_CONNECT_ADMIN_TOKEN`                 | unset                     | Requires bearer-token auth for local admin API, docs, and web console.                              |
@@ -19,6 +20,7 @@ OpenConnector is configured with environment variables.
 | `OOMOL_CONNECT_JWKS_URI`                    | unset                     | Node-only JWKS endpoint for validating runtime JWT access tokens.                                   |
 | `OOMOL_CONNECT_JWT_ISSUER`                  | unset                     | Expected `iss` claim for runtime JWT access tokens.                                                 |
 | `OOMOL_CONNECT_JWT_AUDIENCE`                | unset                     | Expected API `aud` claim for runtime JWT access tokens.                                             |
+| `OOMOL_CONNECT_JWT_TENANT_CLAIM`            | unset                     | Claim mapped to the immutable tenant for shared-runtime JWTs.                                       |
 | `OOMOL_CONNECT_ALLOWED_ACTIONS`             | unset                     | Comma-separated executable action allowlist. Supports `service.*` and `*`.                          |
 | `OOMOL_CONNECT_BLOCKED_ACTIONS`             | unset                     | Comma-separated executable action denylist. Supports `service.*` and `*`.                           |
 | `OOMOL_CONNECT_ALLOWED_PROXIES`             | unset                     | Comma-separated provider proxy allowlist. Supports service names and `*`.                           |
@@ -65,11 +67,26 @@ connections do not require a grant. Create requests may omit the field; updates 
 Because the bootstrap token has no stored policy, its proxy access is controlled by the deployment
 and runtime rules, while its connection access remains unrestricted.
 
+For a shared customer runtime, set `OOMOL_CONNECT_SHARED_RUNTIME=true`. Startup then requires
+PostgreSQL, `OOMOL_CONNECT_ENCRYPTION_KEY`, and a private operator
+`OOMOL_CONNECT_ADMIN_TOKEN`; it rejects `OOMOL_CONNECT_RUNTIME_TOKEN`. Provision tenants and opaque
+tenant-admin credentials through `/api/operator/tenants` and use `/api/tenant/*` for customer
+management. Startup also requires either an active persistent runtime token or configured JWT
+authentication with `OOMOL_CONNECT_JWT_TENANT_CLAIM`; revoking the last stored token keeps runtime
+routes closed. Tenant identity comes only from the tenant-admin credential, a persistent runtime
+token, or a validated JWT tenant claim. Request headers, aliases, request bodies, OAuth return URLs,
+and action input never select a tenant.
+
 ## Runtime database
 
 The Node runtime uses `OOMOL_CONNECT_DATA_DIR/connect.sqlite` by default and applies SQLite
 migrations automatically when it opens the database. Leave `OOMOL_CONNECT_DATABASE_URL` unset to
 keep this zero-configuration mode.
+
+Tenant-isolation migration `0012` rebuilds SQLite and D1 tables to add tenant keys and foreign-key
+constraints. Stop every runtime instance before applying it, do not run mixed pre- and post-`0012`
+versions, and take a database backup first. The migration is forward-only: after it is applied, do
+not roll back to a binary that expects the former global-key schema.
 
 Set a `postgres:` or `postgresql:` connection URL to use PostgreSQL 15 or newer instead:
 
@@ -110,6 +127,7 @@ and `/mcp`. Configure all three settings together:
 OOMOL_CONNECT_JWKS_URI="https://idp.example.com/oauth2/jwks" \
 OOMOL_CONNECT_JWT_ISSUER="https://idp.example.com" \
 OOMOL_CONNECT_JWT_AUDIENCE="https://connect-api.example.com" \
+OOMOL_CONNECT_JWT_TENANT_CLAIM="open_connector_tenant_id" \
 npm run dev
 ```
 
@@ -118,6 +136,10 @@ HTTP is accepted only for loopback endpoints used during local development. `OOM
 should identify this API resource, not a web application's OIDC client. OpenConnector requires an
 expiration claim and validates the JWT signature, issuer, audience, expiration, and not-before time.
 Clients send the access token as `Authorization: Bearer <jwt>`.
+
+Shared mode requires `OOMOL_CONNECT_JWT_TENANT_CLAIM`; the named signed claim is validated as a
+tenant identifier and becomes the runtime principal. JWTs without that mapping are compatibility
+credentials for non-shared local deployments only.
 
 JWT authentication is additive: the bootstrap runtime token and persistent `oct_...` tokens remain
 valid when JWT verification is configured. For a JWT-only deployment, leave

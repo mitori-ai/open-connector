@@ -61,7 +61,8 @@ with `x-oo-connector-alias: work`, MCP `connectionName: "work"`, or the equivale
 omitted name or `default` returns `connection_not_allowed`.
 
 The Node server accepts JWT access tokens when `OOMOL_CONNECT_JWKS_URI`,
-`OOMOL_CONNECT_JWT_ISSUER`, and `OOMOL_CONNECT_JWT_AUDIENCE` are configured together. JWT
+`OOMOL_CONNECT_JWT_ISSUER`, and `OOMOL_CONNECT_JWT_AUDIENCE` are configured together. Shared
+runtimes also require `OOMOL_CONNECT_JWT_TENANT_CLAIM`, which derives the tenant principal. JWT
 authentication coexists with existing runtime tokens and does not apply to admin endpoints. See
 [Configuration](configuration.md#jwt-access-tokens) for the resource-server scope and Node-only
 limitations.

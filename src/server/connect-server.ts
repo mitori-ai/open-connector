@@ -2,6 +2,7 @@ import type { CatalogStore, RuntimeActionDefinition } from "../catalog-store.ts"
 import type { ConnectionService, ConnectionSummary } from "../connection-service.ts";
 import type { ActionPolicySnapshot } from "../core/action-policy.ts";
 import type { ActionSearchIndexProvider, ActionSearchResult } from "../core/action-search.ts";
+import type { TenantId } from "../core/tenant.ts";
 import type { OAuthClientConfigInput } from "../oauth/oauth-client-config-service.ts";
 import type { IProviderLoader } from "../providers/provider-loader.ts";
 import type { LocalAuthOptions } from "./api/auth.ts";
@@ -12,6 +13,7 @@ import type { IIdempotencyStore } from "./storage/idempotency-store.ts";
 import type { IRuntimePolicyStore } from "./storage/runtime-policy-store.ts";
 import type { RunLogCaller, RunLogListInput } from "./storage/runtime-store.ts";
 import type { RuntimeGrant, RuntimeTokenService } from "./storage/runtime-token-service.ts";
+import type { TenantCredentialService } from "./storage/tenant-credential-service.ts";
 import type { Context } from "hono";
 
 import { createMcpHandler } from "@modelcontextprotocol/server";
@@ -22,6 +24,7 @@ import { ConnectionError, defaultConnectionName } from "../connection-service.ts
 import { ActionPolicyService, emptyPolicyRules } from "../core/action-policy.ts";
 import { DEFAULT_ACTION_SEARCH_LIMIT, createActionSearchIndexProvider, searchActions } from "../core/action-search.ts";
 import { optionalRecord, optionalString, requiredString, requiredStringArray } from "../core/cast.ts";
+import { compatibilityTenantId, parseTenantId } from "../core/tenant.ts";
 import { createMcpServer, listMcpToolSummaries } from "../mcp.ts";
 import { OAuthClientConfigError, OAuthClientConfigService } from "../oauth/oauth-client-config-service.ts";
 import { OAuthFlowError, OAuthFlowService } from "../oauth/oauth-flow-service.ts";
@@ -34,7 +37,13 @@ import {
 } from "./actions/action-idempotency.ts";
 import { ActionRunner } from "./actions/action-runner.ts";
 import { renderActionMarkdown } from "./api/action-markdown.ts";
-import { clearLocalAuthCookie, createLocalAuthMiddleware, readLocalAuthSession, readRuntimeGrant } from "./api/auth.ts";
+import {
+  clearLocalAuthCookie,
+  createLocalAuthMiddleware,
+  readAuthenticatedPrincipal,
+  readLocalAuthSession,
+  readRuntimeGrant,
+} from "./api/auth.ts";
 import { getResponseCachePolicy } from "./api/cache-policy.ts";
 import { HttpRequestError, internalError, jsonError, notFound, readJsonBody } from "./api/http-utils.ts";
 import { renderOAuthCompletionPage } from "./api/oauth-completion-page.ts";
@@ -56,7 +65,7 @@ import {
 import { createTransitFileResponse, TransitFileError } from "./files/transit-file-store.ts";
 import { ProxyRunner } from "./proxy/proxy-runner.ts";
 import { decodeRunLogCursor } from "./storage/runtime-store.ts";
-import { summarizeRuntimeToken } from "./storage/runtime-token-service.ts";
+import { RuntimeTokenPolicyError, summarizeRuntimeToken } from "./storage/runtime-token-service.ts";
 
 /**
  * Dependencies required to construct the local connector server.
@@ -68,10 +77,11 @@ export interface IConnectServerOptions {
   oauthClientConfigs: OAuthClientConfigService;
   oauthFlow: OAuthFlowService;
   runtimeTokens: RuntimeTokenService;
+  tenantCredentials?: TenantCredentialService;
   actions: ActionRunner;
   idempotency: IIdempotencyStore;
   transitFiles: ITransitFileService;
-  uploadTransitFile?: (request: Request) => Promise<TransitFileUpload>;
+  uploadTransitFile?: (request: Request, tenantId?: TenantId) => Promise<TransitFileUpload>;
   staticRoot?: string;
   auth?: LocalAuthOptions;
   actionPolicy?: ActionPolicyService;
@@ -203,6 +213,34 @@ export class ConnectServer {
     app.post("/api/runtime-tokens", (context) => this.createRuntimeToken(context));
     app.put("/api/runtime-tokens/:id", (context) => this.updateRuntimeToken(context, context.req.param("id")));
     app.delete("/api/runtime-tokens/:id", (context) => this.revokeRuntimeToken(context, context.req.param("id")));
+
+    app.get("/api/tenant/context", (context) => this.getTenantContext(context));
+    app.get("/api/tenant/connections", (context) => this.listConnections(context));
+    app.put("/api/tenant/connections/:service", (context) =>
+      this.upsertConnection(context, context.req.param("service")),
+    );
+    app.delete("/api/tenant/connections/:service", (context) => this.disconnect(context, context.req.param("service")));
+    app.get("/api/tenant/runs", (context) => this.listRuns(context));
+    app.get("/api/tenant/runs/:id", (context) => this.getRun(context, context.req.param("id")));
+    app.get("/api/tenant/runtime-tokens", (context) => this.listRuntimeTokens(context));
+    app.post("/api/tenant/runtime-tokens", (context) => this.createRuntimeToken(context));
+    app.put("/api/tenant/runtime-tokens/:id", (context) => this.updateRuntimeToken(context, context.req.param("id")));
+    app.delete("/api/tenant/runtime-tokens/:id", (context) =>
+      this.revokeRuntimeToken(context, context.req.param("id")),
+    );
+    app.post("/api/tenant/oauth/authorizations", (context) => this.createOAuthAuthorization(context));
+
+    app.get("/api/operator/tenants", (context) => this.listTenants(context));
+    app.post("/api/operator/tenants", (context) => this.createTenant(context));
+    app.post("/api/operator/tenants/:tenantId/admin-credentials", (context) =>
+      this.createTenantAdminCredential(context, context.req.param("tenantId")),
+    );
+    app.get("/api/operator/tenants/:tenantId/admin-credentials", (context) =>
+      this.listTenantAdminCredentials(context, context.req.param("tenantId")),
+    );
+    app.delete("/api/operator/tenants/:tenantId/admin-credentials/:credentialId", (context) =>
+      this.revokeTenantAdminCredential(context, context.req.param("tenantId"), context.req.param("credentialId")),
+    );
     app.get("/api/runtime-policy", (context) => this.getRuntimePolicy(context));
     app.put("/api/runtime-policy", (context) => this.updateRuntimePolicy(context));
     app.get("/api/oauth/configs", (context) => this.listOAuthConfigs(context));
@@ -219,6 +257,9 @@ export class ConnectServer {
 
     this.options.registerStaticRoutes?.(app);
     app.onError((error, context) => {
+      if (error instanceof RuntimeTokenPolicyError) {
+        return jsonError(context, 400, "invalid_connection_grant", error.message);
+      }
       if (error instanceof HttpRequestError) {
         if (context.req.path.startsWith("/v1/")) {
           return writeRuntimeFailure(context, {
@@ -264,7 +305,7 @@ export class ConnectServer {
   private async createTransitFile(context: Context): Promise<Response> {
     try {
       if (this.options.uploadTransitFile) {
-        return context.json(await this.options.uploadTransitFile(context.req.raw));
+        return context.json(await this.options.uploadTransitFile(context.req.raw, this.tenantId(context)));
       }
 
       const form = await context.req.raw.formData();
@@ -272,7 +313,7 @@ export class ConnectServer {
       if (!(file instanceof File)) {
         return jsonError(context, 400, "invalid_input", "file is required.");
       }
-      const upload = await this.options.transitFiles.create(file);
+      const upload = await this.options.transitFiles.create(file, this.tenantId(context));
       return context.json(upload);
     } catch (error) {
       return this.handleTransitFileError(context, error);
@@ -282,10 +323,10 @@ export class ConnectServer {
   private async getTransitFile(context: Context, fileId: string): Promise<Response> {
     try {
       if (this.options.transitFiles.response) {
-        return await this.options.transitFiles.response(fileId);
+        return await this.options.transitFiles.response(fileId, this.tenantId(context));
       }
 
-      const file = await this.options.transitFiles.read(fileId);
+      const file = await this.options.transitFiles.read(fileId, this.tenantId(context));
       return createTransitFileResponse(file);
     } catch (error) {
       return this.handleTransitFileError(context, error);
@@ -294,7 +335,7 @@ export class ConnectServer {
 
   private async deleteTransitFile(context: Context, fileId: string): Promise<Response> {
     try {
-      const deleted = await this.options.transitFiles.delete(fileId);
+      const deleted = await this.options.transitFiles.delete(fileId, this.tenantId(context));
       return context.json({ fileId, deleted });
     } catch (error) {
       return this.handleTransitFileError(context, error);
@@ -323,11 +364,11 @@ export class ConnectServer {
       return jsonError(context, 400, "invalid_input", query.message);
     }
 
-    return context.json(await this.options.actions.listRuns(query.input));
+    return context.json(await this.options.actions.listRuns(this.tenantId(context), query.input));
   }
 
   private async getRun(context: Context, id: string): Promise<Response> {
-    const run = await this.options.actions.getRun(id);
+    const run = await this.options.actions.getRun(this.tenantId(context), id);
     return run ? context.json(run) : jsonError(context, 404, "run_not_found", `Run not found: ${id}.`);
   }
 
@@ -344,6 +385,7 @@ export class ConnectServer {
           service: query.service,
           limit: query.limit,
         }),
+        this.tenantId(context),
       ),
     );
   }
@@ -358,7 +400,11 @@ export class ConnectServer {
       const policy = (await this.getPolicySnapshot(context)).evaluate(action);
       return context.text(
         renderActionMarkdown(action, {
-          connection: await this.options.connections.getConnectionSummary(action.service, readConnectionName(context)),
+          connection: await this.options.connections.getConnectionSummary(
+            action.service,
+            readConnectionName(context),
+            this.tenantId(context),
+          ),
           providerPermissions: action.providerPermissions,
           policy,
         }),
@@ -427,12 +473,18 @@ export class ConnectServer {
       service: query.service,
       limit: query.limit,
     });
-    return writeRuntimeSuccess(context, await this.serializeSearchResults(results));
+    return writeRuntimeSuccess(context, await this.serializeSearchResults(results, this.tenantId(context)));
   }
 
-  private async serializeSearchResults(results: ActionSearchResult[]): Promise<RuntimeActionSearchResult[]> {
+  private async serializeSearchResults(
+    results: ActionSearchResult[],
+    tenantId: TenantId,
+  ): Promise<RuntimeActionSearchResult[]> {
     const authenticated = new Set(
-      await this.options.connections.listAuthenticatedServices([...new Set(results.map((result) => result.service))]),
+      await this.options.connections.listAuthenticatedServices(
+        [...new Set(results.map((result) => result.service))],
+        tenantId,
+      ),
     );
     return results.flatMap((result) => {
       const action = this.options.catalog.actionsById.get(result.id);
@@ -462,6 +514,7 @@ export class ConnectServer {
     const input = body.input ?? {};
     const connectionName = readConnectionName(context, body);
     const runtimeGrant = readRuntimeGrant(context);
+    const tenantId = this.tenantId(context);
     let policy: ActionPolicySnapshot;
     try {
       policy = await this.getPolicySnapshot(context);
@@ -476,7 +529,15 @@ export class ConnectServer {
     if (!policy.evaluate(action).allowed) {
       return writeRuntimeActionHttpResult(
         context,
-        await this.executeRuntimeAction(actionId, input, connectionName, policy, runtimeGrant, context.req.raw.signal),
+        await this.executeRuntimeAction(
+          actionId,
+          input,
+          connectionName,
+          policy,
+          runtimeGrant,
+          tenantId,
+          context.req.raw.signal,
+        ),
       );
     }
     const idempotencyKey = readIdempotencyKey(context.req.header("idempotency-key"));
@@ -492,7 +553,15 @@ export class ConnectServer {
     if (!idempotencyKey.key) {
       return writeRuntimeActionHttpResult(
         context,
-        await this.executeRuntimeAction(actionId, input, connectionName, policy, runtimeGrant, context.req.raw.signal),
+        await this.executeRuntimeAction(
+          actionId,
+          input,
+          connectionName,
+          policy,
+          runtimeGrant,
+          tenantId,
+          context.req.raw.signal,
+        ),
       );
     }
 
@@ -501,6 +570,7 @@ export class ConnectServer {
     let requestHash: string;
     try {
       requestHash = hashActionRequest({
+        tenantId,
         actionId,
         connectionName: connectionName ?? defaultConnectionName,
         input,
@@ -519,6 +589,7 @@ export class ConnectServer {
     }
     const claimId = crypto.randomUUID();
     const claim = await this.options.idempotency.claim({
+      tenantId,
       keyHash,
       requestHash,
       claimId,
@@ -552,9 +623,11 @@ export class ConnectServer {
       connectionName,
       policy,
       runtimeGrant,
+      tenantId,
       context.req.raw.signal,
     );
     const completed = await this.options.idempotency.complete({
+      tenantId,
       keyHash,
       requestHash,
       claimId,
@@ -574,10 +647,12 @@ export class ConnectServer {
     connectionName: string | undefined,
     policy: ActionPolicySnapshot,
     runtimeGrant: RuntimeGrant | undefined,
+    tenantId: TenantId,
     signal: AbortSignal | undefined,
   ): Promise<RuntimeActionHttpResult> {
     try {
       const run = await this.options.actions.run({
+        tenantId,
         actionId,
         input,
         caller: "http",
@@ -639,6 +714,7 @@ export class ConnectServer {
       });
     }
     const result = await this.proxyRunner.run({
+      tenantId: this.tenantId(context),
       service,
       input: body,
       connectionName: readConnectionName(context, body),
@@ -670,7 +746,7 @@ export class ConnectServer {
     }
     return writeRuntimeSuccess(
       context,
-      this.filterAllowedConnections(policy, await this.options.connections.listConnections()).map(
+      this.filterAllowedConnections(policy, await this.options.connections.listConnections(this.tenantId(context))).map(
         serializeRuntimeConnectedApp,
       ),
     );
@@ -691,9 +767,10 @@ export class ConnectServer {
     try {
       return writeRuntimeSuccess(
         context,
-        this.filterAllowedConnections(policy, await this.options.connections.listConnectionsByService(service)).map(
-          serializeRuntimeConnectedApp,
-        ),
+        this.filterAllowedConnections(
+          policy,
+          await this.options.connections.listConnectionsByService(service, this.tenantId(context)),
+        ).map(serializeRuntimeConnectedApp),
       );
     } catch (error) {
       if (error instanceof ConnectionError) {
@@ -722,7 +799,7 @@ export class ConnectServer {
       });
     }
     const authenticated = new Set(
-      this.filterAllowedConnections(policy, await this.options.connections.listConnections())
+      this.filterAllowedConnections(policy, await this.options.connections.listConnections(this.tenantId(context)))
         .filter((connection) => connection.configured && connection.authType !== "no_auth")
         .map((connection) => connection.service),
     );
@@ -753,6 +830,7 @@ export class ConnectServer {
           actionSearch: this.actionSearch,
           getPolicySnapshot: () => this.getPolicySnapshot(context),
           runtimeGrant: readRuntimeGrant(context),
+          tenantId: this.tenantId(context),
           signal: context.req.raw.signal,
         }),
       { legacy: "stateless", responseMode: "json" },
@@ -779,7 +857,7 @@ export class ConnectServer {
   }
 
   private async listConnections(context: Context): Promise<Response> {
-    return context.json(await this.options.connections.listConnections());
+    return context.json(await this.options.connections.listConnections(this.tenantId(context)));
   }
 
   private async upsertConnection(context: Context, service: string): Promise<Response> {
@@ -810,7 +888,7 @@ export class ConnectServer {
       this.options.logger?.info(logContext, "connection started");
       return this.writeConnectionResult(
         context,
-        this.options.connections.connectWithoutAuth(service, { connectionName }),
+        this.options.connections.connectWithoutAuth(service, { connectionName }, this.tenantId(context)),
         logContext,
       );
     }
@@ -818,7 +896,7 @@ export class ConnectServer {
       this.options.logger?.info(logContext, "connection started");
       return this.writeConnectionResult(
         context,
-        this.options.connections.connectWithApiKey(service, { values, connectionName }),
+        this.options.connections.connectWithApiKey(service, { values, connectionName }, this.tenantId(context)),
         logContext,
       );
     }
@@ -826,7 +904,11 @@ export class ConnectServer {
       this.options.logger?.info(logContext, "connection started");
       return this.writeConnectionResult(
         context,
-        this.options.connections.connectWithCustomCredential(service, { values, connectionName }),
+        this.options.connections.connectWithCustomCredential(
+          service,
+          { values, connectionName },
+          this.tenantId(context),
+        ),
         logContext,
       );
     }
@@ -853,7 +935,7 @@ export class ConnectServer {
     this.options.logger?.info(logContext, "connection disconnect started");
     return this.writeConnectionResult(
       context,
-      this.options.connections.disconnect(service, connectionName),
+      this.options.connections.disconnect(service, connectionName, this.tenantId(context)),
       logContext,
     );
   }
@@ -894,6 +976,7 @@ export class ConnectServer {
       this.options.logger?.info(logContext, "oauth authorization started");
 
       const authorization = await this.options.oauthFlow.startAuthorization({
+        tenantId: this.tenantId(context),
         service,
         connectionName,
         returnUrl,
@@ -926,7 +1009,7 @@ export class ConnectServer {
   }
 
   private async listRuntimeTokens(context: Context): Promise<Response> {
-    return context.json(await this.options.runtimeTokens.listTokens());
+    return context.json(await this.options.runtimeTokens.listTokens(this.tenantId(context)));
   }
 
   private async createRuntimeToken(context: Context): Promise<Response> {
@@ -936,7 +1019,11 @@ export class ConnectServer {
       return jsonError(context, 400, "invalid_input", "name is required.");
     }
 
-    const created = await this.options.runtimeTokens.createToken(name, readTokenPolicy(body, true));
+    const created = await this.options.runtimeTokens.createToken(
+      name,
+      readTokenPolicy(body, true),
+      this.tenantId(context),
+    );
     return context.json({
       token: created.token,
       record: summarizeRuntimeToken(created.record),
@@ -945,14 +1032,14 @@ export class ConnectServer {
 
   private async updateRuntimeToken(context: Context, id: string): Promise<Response> {
     const body = await readJsonBody(context, policyRequestMaxBytes);
-    const token = await this.options.runtimeTokens.updateTokenPolicy(id, readTokenPolicy(body));
+    const token = await this.options.runtimeTokens.updateTokenPolicy(id, readTokenPolicy(body), this.tenantId(context));
     return token
       ? context.json(token)
       : jsonError(context, 404, "runtime_token_not_found", `Runtime token not found: ${id}.`);
   }
 
   private async revokeRuntimeToken(context: Context, id: string): Promise<Response> {
-    if (!(await this.options.runtimeTokens.revokeToken(id))) {
+    if (!(await this.options.runtimeTokens.revokeToken(id, this.tenantId(context)))) {
       return jsonError(context, 404, "runtime_token_not_found", `Runtime token not found: ${id}.`);
     }
 
@@ -1112,6 +1199,75 @@ export class ConnectServer {
 
       throw error;
     }
+  }
+
+  private getTenantContext(context: Context): Response {
+    const principal = readAuthenticatedPrincipal(context);
+    if (principal?.kind !== "tenant" || principal.capability !== "tenant-admin") {
+      return context.json({ error: { code: "forbidden", message: "A tenant-admin credential is required." } }, 403);
+    }
+    return context.json({ tenantId: principal.tenantId, capability: principal.capability });
+  }
+
+  private async listTenants(context: Context): Promise<Response> {
+    return context.json(await this.requireTenantCredentials().listTenants());
+  }
+
+  private async createTenant(context: Context): Promise<Response> {
+    const body = await readJsonBody(context);
+    const id = parseTenantId(
+      requiredString(body.id, "id", (message) => new HttpRequestError("invalid_input", message)),
+    );
+    const displayName = requiredString(
+      body.displayName,
+      "displayName",
+      (message) => new HttpRequestError("invalid_input", message),
+    );
+    const record = { id, displayName, createdAt: new Date().toISOString() };
+    await this.requireTenantCredentials().createTenant(record);
+    return context.json(record, 201);
+  }
+
+  private async createTenantAdminCredential(context: Context, tenantIdInput: string): Promise<Response> {
+    const body = await readJsonBody(context);
+    const name = requiredString(body.name, "name", (message) => new HttpRequestError("invalid_input", message));
+    const created = await this.requireTenantCredentials().issueAdminCredential(parseTenantId(tenantIdInput), name);
+    return context.json({
+      credential: created.credential,
+      record: {
+        id: created.record.id,
+        tenantId: created.record.tenantId,
+        name: created.record.name,
+        createdAt: created.record.createdAt,
+      },
+    });
+  }
+
+  private async listTenantAdminCredentials(context: Context, tenantIdInput: string): Promise<Response> {
+    const records = await this.requireTenantCredentials().listAdminCredentials(parseTenantId(tenantIdInput));
+    return context.json(records.map(({ tokenHash: _tokenHash, ...record }) => record));
+  }
+
+  private async revokeTenantAdminCredential(
+    context: Context,
+    tenantIdInput: string,
+    credentialId: string,
+  ): Promise<Response> {
+    const tenantId = parseTenantId(tenantIdInput);
+    if (!(await this.requireTenantCredentials().revokeAdminCredential(tenantId, credentialId))) {
+      return jsonError(context, 404, "tenant_admin_credential_not_found", "Tenant admin credential was not found.");
+    }
+    return context.json({ id: credentialId, tenantId, revoked: true });
+  }
+
+  private tenantId(context: Context): TenantId {
+    const principal = readAuthenticatedPrincipal(context);
+    return principal?.kind === "tenant" ? principal.tenantId : compatibilityTenantId;
+  }
+
+  private requireTenantCredentials(): TenantCredentialService {
+    if (!this.options.tenantCredentials) throw new Error("Tenant credential storage is unavailable.");
+    return this.options.tenantCredentials;
   }
 
   private getPolicySnapshot(context: Context): Promise<ActionPolicySnapshot> {

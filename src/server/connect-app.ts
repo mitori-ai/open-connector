@@ -1,5 +1,6 @@
 import type { CatalogStore } from "../catalog-store.ts";
 import type { ActionPolicyService } from "../core/action-policy.ts";
+import type { TenantId } from "../core/tenant.ts";
 import type { IProviderLoader } from "../providers/provider-loader.ts";
 import type { RuntimeJwtVerifier } from "./api/runtime-jwt.ts";
 import type { ITransitFileService, TransitFileUpload } from "./files/transit-file-store.ts";
@@ -15,17 +16,19 @@ import { OAuthFlowService } from "../oauth/oauth-flow-service.ts";
 import { ActionRunner } from "./actions/action-runner.ts";
 import { ConnectServer } from "./connect-server.ts";
 import { RuntimeTokenService } from "./storage/runtime-token-service.ts";
+import { TenantCredentialService } from "./storage/tenant-credential-service.ts";
 
 export interface ConnectAppOptions {
   catalog: CatalogStore;
   providerLoader: IProviderLoader;
   runtimeDatabase: RuntimeDatabase;
   transitFiles: ITransitFileService;
-  uploadTransitFile?: (request: Request) => Promise<TransitFileUpload>;
+  uploadTransitFile?: (request: Request, tenantId?: TenantId) => Promise<TransitFileUpload>;
   publicOrigin: string;
   secretCodec: ISecretCodec;
   adminToken?: string;
   runtimeToken?: string;
+  sharedRuntime?: boolean;
   allowedCustomOAuth?: string[];
   allowedOAuthReturnUrlOrigins?: string[];
   verifyRuntimeJwt?: RuntimeJwtVerifier;
@@ -42,8 +45,6 @@ export interface ConnectApp {
 }
 
 export async function createConnectApp(options: ConnectAppOptions): Promise<ConnectApp> {
-  const runtimeTokens = new RuntimeTokenService(options.runtimeDatabase.runtimeTokenStore, options.logger);
-  const hasStoredRuntimeTokens = async (): Promise<boolean> => (await runtimeTokens.listTokens()).length > 0;
   const allowedCustomOAuth = new Set(options.allowedCustomOAuth);
   const isCustomClientConfigAllowed = (service: string): boolean =>
     allowedCustomOAuth.has("*") || allowedCustomOAuth.has(service);
@@ -60,6 +61,14 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     store: options.runtimeDatabase.connectionStore,
     logger: options.logger,
   });
+  const runtimeTokens = new RuntimeTokenService(
+    options.runtimeDatabase.runtimeTokenStore,
+    options.logger,
+    options.runtimeDatabase.connectionStore,
+  );
+  const tenantCredentials = new TenantCredentialService(options.runtimeDatabase.tenantCredentialStore, options.logger);
+  const hasStoredRuntimeTokens = (): Promise<boolean> => runtimeTokens.hasTokens();
+  const hasTenantAdminCredentials = (): Promise<boolean> => tenantCredentials.hasAdminCredentials();
   const actions = new ActionRunner({
     catalog: options.catalog,
     providerLoader: options.providerLoader,
@@ -69,6 +78,12 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     actionPolicy: options.actionPolicy,
     logger: options.logger,
   });
+  const hasInitialRuntimeAuth = Boolean(options.verifyRuntimeJwt) || (await hasStoredRuntimeTokens());
+  if (options.sharedRuntime && !hasInitialRuntimeAuth) {
+    throw new Error(
+      "Shared runtime authentication is not ready; configure tenant-claim JWT authentication or create an active stored runtime token before startup.",
+    );
+  }
 
   return {
     app: new ConnectServer({
@@ -88,14 +103,18 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
       transitFiles: options.transitFiles,
       uploadTransitFile: options.uploadTransitFile,
       runtimeTokens,
+      tenantCredentials,
       runtimePolicyStore: options.runtimeDatabase.runtimePolicyStore,
       allowedOAuthReturnUrlOrigins: options.allowedOAuthReturnUrlOrigins,
       registerStaticRoutes: options.registerStaticRoutes,
       auth: {
         adminToken: options.adminToken,
         runtimeToken: options.runtimeToken,
+        sharedRuntime: options.sharedRuntime,
         hasRuntimeTokens: hasStoredRuntimeTokens,
+        hasTenantAdminCredentials,
         resolveRuntimeToken: (token) => runtimeTokens.resolveToken(token),
+        tenantCredentials,
         verifyRuntimeJwt: options.verifyRuntimeJwt,
       },
       actionPolicy: options.actionPolicy,
@@ -105,6 +124,6 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
     runtimeAuthConfigured:
       Boolean(options.runtimeToken) ||
       Boolean(options.verifyRuntimeJwt) ||
-      (options.computeRuntimeAuthConfigured === false ? false : await hasStoredRuntimeTokens()),
+      (options.computeRuntimeAuthConfigured === false ? false : hasInitialRuntimeAuth),
   };
 }

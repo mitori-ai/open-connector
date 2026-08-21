@@ -1,4 +1,5 @@
 import type { ActionPolicyDecision } from "../../core/action-policy.ts";
+import type { TenantId } from "../../core/tenant.ts";
 import type { CredentialProfile } from "../../core/types.ts";
 
 export const DEFAULT_RUN_LIMIT = 5_000;
@@ -74,7 +75,7 @@ export function decodeRunLogCursor(cursor: string | undefined): RunLogCursor | u
  * Storage contract for recent action run logs.
  */
 export interface IRunLogStore {
-  add(run: RunLog): Promise<RunLogWriteResult>;
-  get(id: string): Promise<RunLog | undefined>;
-  list(input?: RunLogListInput): Promise<RunLogPage>;
+  add(run: RunLog, tenantId?: TenantId): Promise<RunLogWriteResult>;
+  get(id: string, tenantId?: TenantId): Promise<RunLog | undefined>;
+  list(input?: RunLogListInput, tenantId?: TenantId): Promise<RunLogPage>;
 }

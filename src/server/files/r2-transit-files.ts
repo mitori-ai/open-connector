@@ -1,7 +1,9 @@
+import type { TenantId } from "../../core/tenant.ts";
 import type { R2BucketBinding, R2ObjectBinding } from "../cloudflare/cloudflare-bindings.ts";
 import type { ITransitFileService, TransitFileRead, TransitFileUpload } from "./transit-file-store.ts";
 
 import { extname } from "node:path";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { contentDispositionForFileName, contentTypeFromFileId, TransitFileError } from "./transit-file-store.ts";
 
 export interface R2TransitFileOptions {
@@ -12,6 +14,7 @@ export interface R2TransitFileOptions {
 }
 
 interface TransitFileMetadata {
+  tenantId: TenantId;
   name: string;
   mimeType: string;
   createdAt: string;
@@ -31,20 +34,21 @@ export class R2TransitFileService implements ITransitFileService {
     this.maxBytes = options.maxBytes;
   }
 
-  async create(file: File): Promise<TransitFileUpload> {
+  async create(file: File, tenantId: TenantId = compatibilityTenantId): Promise<TransitFileUpload> {
     this.assertFileSize(file.size);
     const fileId = `${randomHex(16)}${safeExtension(file.name)}`;
     const metadata = normalizeMetadata({
+      tenantId,
       name: file.name || fileId,
       mimeType: file.type || contentTypeFromFileId(fileId),
       createdAt: new Date().toISOString(),
       sizeBytes: file.size,
     });
 
-    await this.bucket.put(objectKey(fileId), file.stream(), {
+    await this.bucket.put(objectKey(tenantId, fileId), file.stream(), {
       httpMetadata: { contentType: metadata.mimeType },
     });
-    await this.bucket.put(metadataKey(fileId), JSON.stringify(metadata));
+    await this.bucket.put(metadataKey(tenantId, fileId), JSON.stringify(metadata));
 
     return {
       fileId,
@@ -55,8 +59,8 @@ export class R2TransitFileService implements ITransitFileService {
     };
   }
 
-  async read(fileId: string): Promise<TransitFileRead> {
-    const { object, metadata } = await this.readObject(fileId);
+  async read(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<TransitFileRead> {
+    const { object, metadata } = await this.readObject(tenantId, fileId);
     return {
       file: new File([await object.arrayBuffer()], metadata.name, { type: metadata.mimeType }),
       sizeBytes: metadata.sizeBytes,
@@ -65,8 +69,8 @@ export class R2TransitFileService implements ITransitFileService {
     };
   }
 
-  async response(fileId: string): Promise<Response> {
-    const { object, metadata } = await this.readObject(fileId);
+  async response(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<Response> {
+    const { object, metadata } = await this.readObject(tenantId, fileId);
     return new Response(object.body, {
       headers: {
         "content-length": String(metadata.sizeBytes),
@@ -76,31 +80,40 @@ export class R2TransitFileService implements ITransitFileService {
     });
   }
 
-  async delete(fileId: string): Promise<boolean> {
+  async delete(fileId: string, tenantId: TenantId = compatibilityTenantId): Promise<boolean> {
     assertSafeFileId(fileId);
-    const existing = await this.bucket.get(objectKey(fileId));
-    await Promise.all([this.bucket.delete(objectKey(fileId)), this.bucket.delete(metadataKey(fileId))]);
+    const existing = await this.bucket.get(objectKey(tenantId, fileId));
+    await Promise.all([
+      this.bucket.delete(objectKey(tenantId, fileId)),
+      this.bucket.delete(metadataKey(tenantId, fileId)),
+    ]);
     return existing != null;
   }
 
   async cleanupExpired(): Promise<void> {}
 
-  private async readObject(fileId: string): Promise<{
+  private async readObject(
+    tenantId: TenantId,
+    fileId: string,
+  ): Promise<{
     object: R2ObjectBinding;
     metadata: TransitFileMetadata;
   }> {
     assertSafeFileId(fileId);
-    const [object, metadata] = await Promise.all([this.bucket.get(objectKey(fileId)), this.readMetadata(fileId)]);
+    const [object, metadata] = await Promise.all([
+      this.bucket.get(objectKey(tenantId, fileId)),
+      this.readMetadata(tenantId, fileId),
+    ]);
     if (!object || !metadata || this.isExpired(metadata)) {
-      await this.delete(fileId);
+      await this.delete(fileId, tenantId);
       throw new TransitFileError(404, "file_not_found", "Transit file was not found.");
     }
 
     return { object, metadata };
   }
 
-  private async readMetadata(fileId: string): Promise<TransitFileMetadata | undefined> {
-    const metadata = await this.bucket.get(metadataKey(fileId));
+  private async readMetadata(tenantId: TenantId, fileId: string): Promise<TransitFileMetadata | undefined> {
+    const metadata = await this.bucket.get(metadataKey(tenantId, fileId));
     if (!metadata) {
       return undefined;
     }
@@ -129,6 +142,7 @@ async function metadataText(metadata: { arrayBuffer(): Promise<ArrayBuffer> }): 
 
 function normalizeMetadata(input: Partial<TransitFileMetadata>): TransitFileMetadata {
   return {
+    tenantId: typeof input.tenantId === "string" ? (input.tenantId as TenantId) : ("" as TenantId),
     name: typeof input.name === "string" && input.name.trim() ? input.name.trim() : "file",
     mimeType:
       typeof input.mimeType === "string" && input.mimeType.trim() ? input.mimeType.trim() : "application/octet-stream",
@@ -137,12 +151,12 @@ function normalizeMetadata(input: Partial<TransitFileMetadata>): TransitFileMeta
   };
 }
 
-function objectKey(fileId: string): string {
-  return `transit/${fileId}`;
+function objectKey(tenantId: TenantId, fileId: string): string {
+  return tenantId === compatibilityTenantId ? `transit/${fileId}` : `transit/${tenantId}/${fileId}`;
 }
 
-function metadataKey(fileId: string): string {
-  return `transit/${fileId}.meta.json`;
+function metadataKey(tenantId: TenantId, fileId: string): string {
+  return tenantId === compatibilityTenantId ? `transit/${fileId}.meta.json` : `transit/${tenantId}/${fileId}.meta.json`;
 }
 
 function assertSafeFileId(fileId: string): void {

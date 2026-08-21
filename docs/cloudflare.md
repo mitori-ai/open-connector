@@ -100,6 +100,11 @@ The health endpoint should return `{"ok":true}`.
 Apply all pending migrations to the remote D1 database before the initial deployment and every
 upgrade. `npm run deploy:cloudflare` does not apply D1 migrations:
 
+Migration `0012_tenant_isolation.sql` destructively rebuilds several tables to enforce tenant
+foreign keys. Put the Worker in maintenance mode, ensure no old Worker version can serve traffic,
+and back up D1 before applying it. Do not run mixed versions or roll back to a pre-`0012` Worker
+after the migration.
+
 ```bash
 npx wrangler d1 migrations apply open-connector --remote --config wrangler.local.jsonc
 ```

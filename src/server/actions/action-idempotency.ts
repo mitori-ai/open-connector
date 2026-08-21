@@ -1,3 +1,5 @@
+import type { TenantId } from "../../core/tenant.ts";
+
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 
@@ -24,6 +26,7 @@ export type IdempotencyKeyResult = { ok: true; key: string | undefined } | { ok:
 
 /** Action request semantics covered by one idempotency-key fingerprint. */
 export interface ActionRequestFingerprintInput {
+  tenantId?: TenantId;
   actionId: string;
   connectionName: string;
   input: unknown;
@@ -62,6 +65,7 @@ export function hashIdempotencyKey(key: string): string {
 export function hashActionRequest(input: ActionRequestFingerprintInput): string {
   return sha256(
     JSON.stringify({
+      tenantId: input.tenantId,
       actionId: input.actionId,
       connectionName: input.connectionName,
       input: canonicalize(input.input, 1),

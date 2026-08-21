@@ -1,4 +1,5 @@
 import type { ConnectionService } from "../connection-service.ts";
+import type { TenantId } from "../core/tenant.ts";
 import type { ISecretCodec } from "../server/secrets/secret-codec-core.ts";
 import type {
   OAuthClientConfig,
@@ -7,6 +8,7 @@ import type {
 } from "./oauth-client-config-service.ts";
 
 import { createHash, randomBytes } from "node:crypto";
+import { compatibilityTenantId } from "../core/tenant.ts";
 import { normalizeSlackAuthorizationCredential } from "../providers/slack/oauth.ts";
 import { requestAuthorizationCodeToken } from "./oauth-token.ts";
 
@@ -20,6 +22,7 @@ export type OAuthAuthorizationStart = {
 };
 
 export interface OAuthAuthorizationStartInput {
+  tenantId?: TenantId;
   service: string;
   connectionName?: string;
   returnUrl?: string;
@@ -35,6 +38,7 @@ export interface OAuthAuthorizationCompleteInput {
  * Short-lived OAuth state stored while the browser completes authorization.
  */
 export interface OAuthAuthorizationState {
+  tenantId?: TenantId;
   service: string;
   connectionName?: string;
   state: string;
@@ -84,6 +88,7 @@ export class OAuthFlowService {
 
   async startAuthorization(input: OAuthAuthorizationStartInput): Promise<OAuthAuthorizationStart> {
     const { service, connectionName, returnUrl } = input;
+    const tenantId = input.tenantId ?? compatibilityTenantId;
     this.connections.assertProviderAvailable(service);
     const auth = this.clientConfigs.getOAuthDefinition(service);
     const config = input.clientConfig
@@ -96,6 +101,7 @@ export class OAuthFlowService {
     const state = crypto.randomUUID();
     const pkceCodeVerifier = auth.pkce ? createPkceCodeVerifier() : undefined;
     await this.states.set({
+      tenantId,
       service,
       connectionName,
       state,
@@ -183,7 +189,12 @@ export class OAuthFlowService {
         },
       };
 
-      await this.connections.setOAuthCredential(pending.service, oauthCredential, pending.connectionName);
+      await this.connections.setOAuthCredential(
+        pending.service,
+        oauthCredential,
+        pending.connectionName,
+        pending.tenantId ?? compatibilityTenantId,
+      );
       return { service: pending.service, connected: true, returnUrl: pending.returnUrl };
     } catch (error) {
       if (error instanceof OAuthFlowError) {

@@ -1,13 +1,16 @@
 import type { CatalogStore } from "../../catalog-store.ts";
 import type { ConnectionService, ConnectionSummary, ExecutionConnection } from "../../connection-service.ts";
 import type { ActionPolicyDecision, ActionPolicyService, ActionPolicySnapshot } from "../../core/action-policy.ts";
-import type { ExecutionContext, ExecutionResult, TransitFileWriter } from "../../core/types.ts";
+import type { TenantId } from "../../core/tenant.ts";
+import type { ExecutionContext, ExecutionResult } from "../../core/types.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
+import type { ITransitFileService } from "../files/transit-file-store.ts";
 import type { Logger } from "../logger.ts";
 import type { IRunLogStore, RunLog, RunLogCaller, RunLogListInput, RunLogPage } from "../storage/runtime-store.ts";
 
 import { ConnectionError } from "../../connection-service.ts";
 import { executeAction as executeProviderAction } from "../../core/execution.ts";
+import { compatibilityTenantId } from "../../core/tenant.ts";
 import { safeRunLogError, summarizeForRunLog } from "./run-log-summary.ts";
 
 export interface ActionRunnerOptions {
@@ -15,12 +18,13 @@ export interface ActionRunnerOptions {
   providerLoader: IProviderLoader;
   connections: ConnectionService;
   runs: IRunLogStore;
-  transitFiles?: TransitFileWriter;
+  transitFiles?: ITransitFileService;
   actionPolicy?: ActionPolicyService;
   logger?: Logger;
 }
 
 export interface RunActionInput {
+  tenantId?: TenantId;
   actionId: string;
   input: unknown;
   caller: RunLogCaller;
@@ -48,6 +52,7 @@ export class ActionRunner {
   }
 
   async run(input: RunActionInput): Promise<ActionRunResult | undefined> {
+    const tenantId = input.tenantId ?? compatibilityTenantId;
     const action = this.options.catalog.actionsById.get(input.actionId);
     if (!action) {
       this.options.logger?.warn(
@@ -81,7 +86,11 @@ export class ActionRunner {
       result = cancelledExecutionResult();
     } else {
       try {
-        const summary = await this.options.connections.getConnectionSummary(action.service, input.connectionName);
+        const summary = await this.options.connections.getConnectionSummary(
+          action.service,
+          input.connectionName,
+          tenantId,
+        );
         input.signal?.throwIfAborted();
         const connectionPolicy =
           summary?.authType === "no_auth" ? undefined : snapshot?.evaluateConnection(summary?.id);
@@ -89,7 +98,11 @@ export class ActionRunner {
           policy = connectionPolicy;
           result = { ok: false, error: { code: policy.code, message: policy.message } };
         } else {
-          connection = await this.options.connections.resolveForExecution(action.service, input.connectionName);
+          connection = await this.options.connections.resolveForExecution(
+            action.service,
+            input.connectionName,
+            tenantId,
+          );
           input.signal?.throwIfAborted();
           const executor = action.execution.locallyExecutable
             ? await this.options.providerLoader.loadActionExecutor(
@@ -103,7 +116,7 @@ export class ActionRunner {
             action,
             executor,
             input.input,
-            this.createExecutionContext(connection.getCredential, input.signal),
+            this.createExecutionContext(tenantId, connection.getCredential, input.signal),
           );
           if (input.signal?.aborted) {
             result = cancelledExecutionResult();
@@ -153,7 +166,7 @@ export class ActionRunner {
 
     let auditPersisted = false;
     try {
-      const write = await this.options.runs.add(runLog);
+      const write = await this.options.runs.add(runLog, tenantId);
       auditPersisted = true;
       if (!write.retentionApplied) {
         this.options.logger?.warn({ ...logContext, auditPersisted }, "run audit retention failed");
@@ -181,15 +194,16 @@ export class ActionRunner {
     return { executionId, auditPersisted, result, connection: connection?.summary };
   }
 
-  listRuns(input?: RunLogListInput): Promise<RunLogPage> {
-    return this.options.runs.list(input);
+  listRuns(tenantId: TenantId, input?: RunLogListInput): Promise<RunLogPage> {
+    return this.options.runs.list(input, tenantId);
   }
 
-  getRun(id: string): Promise<RunLog | undefined> {
-    return this.options.runs.get(id);
+  getRun(tenantId: TenantId, id: string): Promise<RunLog | undefined> {
+    return this.options.runs.get(id, tenantId);
   }
 
   private createExecutionContext(
+    tenantId: TenantId,
     getCredential: ExecutionConnection["getCredential"],
     signal: AbortSignal | undefined,
   ): ExecutionContext {
@@ -198,7 +212,13 @@ export class ActionRunner {
       signal,
     };
     if (this.options.transitFiles) {
-      context.transitFiles = this.options.transitFiles;
+      const transitFiles = this.options.transitFiles;
+      context.transitFiles = {
+        maxBytes: transitFiles.maxBytes,
+        create: (file) => transitFiles.create(file, tenantId),
+        read: (fileId) => transitFiles.read(fileId, tenantId),
+        delete: (fileId) => transitFiles.delete(fileId, tenantId),
+      };
     }
     return context;
   }
