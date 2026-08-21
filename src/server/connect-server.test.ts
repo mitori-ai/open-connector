@@ -1103,6 +1103,11 @@ describe("ConnectServer", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toContain("text/html");
       await expect(response.text()).resolves.toContain('<div id="root"></div>');
+
+      const oauthAppsResponse = await app.request("/oauth-apps");
+      expect(oauthAppsResponse.status).toBe(200);
+      expect(oauthAppsResponse.headers.get("content-type")).toContain("text/html");
+      await expect(oauthAppsResponse.text()).resolves.toContain('<div id="root"></div>');
     } finally {
       await rm(staticRoot, { recursive: true, force: true });
     }
