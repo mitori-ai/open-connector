@@ -129,6 +129,50 @@ Each process selects exactly one backend. PostgreSQL and SQLite are not synchron
 PostgreSQL does not import an existing `connect.sqlite` database. Removing the URL makes the runtime
 use the existing SQLite database again.
 
+### Import SQLite Into One PostgreSQL Tenant
+
+Use `runtime:data import` to move an existing compatibility-mode SQLite runtime into one explicit
+tenant in a fresh, migrated PostgreSQL database. The import preserves stable connection UUIDs,
+runtime token hashes and grants, OAuth state, audit runs, idempotency state, runtime policy, and the
+stored credential/OAuth values exactly as encoded. Because encoded secrets are not decrypted or
+re-encrypted, configure the PostgreSQL runtime with the same `OOMOL_CONNECT_ENCRYPTION_KEY` that was
+used by SQLite. Local transit files under the data directory are not database state and are not
+copied by this command.
+
+Before importing:
+
+1. Stop every process that can write to either the SQLite source or PostgreSQL destination. Keep
+   them stopped through validation and the final import.
+2. Back up `connect.sqlite` together with its `-wal` and `-shm` files when present, using a
+   SQLite-aware backup or a copy taken after all writers have stopped. Back up the PostgreSQL
+   destination as well.
+3. Initialize the destination with `npm run runtime:migrate`. It must contain no runtime data or
+   provisioned tenant; only the empty `local` tenant created by migration is accepted.
+4. Run a dry-run with the exact source, target, and tenant planned for the import:
+
+```bash
+npm run runtime:data -- import \
+  --source /absolute/path/to/connect.sqlite \
+  --target-env TARGET_DATABASE_URL \
+  --tenant cryofuture \
+  --tenant-display-name Cryofuture \
+  --dry-run
+```
+
+After the dry-run succeeds, repeat the command without `--dry-run`. The source must contain only
+the compatibility tenant `local`; a shared/multi-tenant SQLite database is rejected. The command
+holds a SQLite writer lock while it checks and reads the source, then validates and writes the
+destination in one exclusive PostgreSQL transaction. Dry-run exercises the same target inserts and
+constraints but rolls the transaction back. A failed or repeated import rolls back and refuses a
+non-empty destination, so it cannot merge or overwrite existing tenant state.
+
+`--target-env` reads the target URL from the named environment variable so database credentials do
+not appear in command arguments or output. Treat that URL and the encryption key as secrets: load
+them from a protected environment or secret manager, and do not put literal credentials in shell
+history, logs, or issue comments. After a successful import, start only the PostgreSQL-backed
+runtime, verify the tenant and connection inventory, and retain the SQLite backup until
+application-level validation is complete.
+
 For multiple Node instances, configure the same PostgreSQL database and
 `OOMOL_CONNECT_ENCRYPTION_KEY` on every instance. Also use the S3-compatible transit-file backend so
 files are shared across instances. Size `OOMOL_CONNECT_DATABASE_POOL_MAX` so the total across all

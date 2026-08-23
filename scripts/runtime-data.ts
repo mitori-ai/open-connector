@@ -2,16 +2,24 @@ import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Pool } from "pg";
+import { parseTenantId } from "../src/core/tenant.ts";
 import { logger } from "../src/server/logger.ts";
 import { createSecretCodec } from "../src/server/secrets/secret-codec.ts";
 import { assertPostgresDatabaseUrl, createNodeRuntimeDatabase } from "../src/server/storage/node-runtime-database.ts";
 import { migratePostgresDatabase } from "../src/server/storage/postgres-migrations.ts";
+import { importSqliteRuntimeToPostgresTenant } from "../src/server/storage/sqlite-postgres-tenant-import.ts";
 
 const { positionals, values: options } = parseArgs({
   args: process.argv.slice(2),
   allowPositionals: true,
   options: {
     "data-dir": { type: "string" },
+    source: { type: "string" },
+    target: { type: "string" },
+    "target-env": { type: "string" },
+    tenant: { type: "string" },
+    "tenant-display-name": { type: "string" },
+    "dry-run": { type: "boolean" },
     plain: { type: "boolean" },
     yes: { type: "boolean" },
   },
@@ -19,25 +27,38 @@ const { positionals, values: options } = parseArgs({
 });
 const [command] = positionals;
 
-if (positionals.length !== 1 || (command !== "migrate" && command !== "reset" && command !== "rotate-key")) {
+if (
+  positionals.length !== 1 ||
+  (command !== "migrate" && command !== "reset" && command !== "rotate-key" && command !== "import")
+) {
   printUsageAndExit();
 }
 
 const nextEncryptionKey = process.env.OOMOL_CONNECT_NEW_ENCRYPTION_KEY;
-if (command === "migrate") {
+if (command === "import") {
   if (options.plain || options.yes || options["data-dir"]) {
-    throw new Error("migrate does not accept --plain, --yes, or --data-dir.");
+    throw new Error("import does not accept --plain, --yes, or --data-dir.");
+  }
+  if (!options.source || (!options.target && !options["target-env"]) || !options.tenant) {
+    throw new Error("import requires explicit --source, --target or --target-env, and --tenant options.");
+  }
+  if (options.target && options["target-env"]) {
+    throw new Error("import accepts only one of --target and --target-env.");
+  }
+} else if (command === "migrate") {
+  if (options.plain || options.yes || options["data-dir"] || hasImportOption()) {
+    throw new Error("migrate does not accept data import options.");
   }
 } else if (command === "rotate-key") {
-  if (options.yes) {
-    throw new Error("--yes is only valid with reset.");
+  if (options.yes || hasImportOption()) {
+    throw new Error("rotate-key does not accept reset or data import options.");
   }
   if (!nextEncryptionKey && !options.plain) {
     throw new Error("rotate-key requires OOMOL_CONNECT_NEW_ENCRYPTION_KEY unless --plain is set.");
   }
 } else {
-  if (options.plain) {
-    throw new Error("--plain is only valid with rotate-key.");
+  if (options.plain || hasImportOption()) {
+    throw new Error("reset does not accept key rotation or data import options.");
   }
   if (!options.yes) {
     throw new Error("reset requires --yes.");
@@ -47,7 +68,33 @@ if (command === "migrate") {
 const databaseUrl = process.env.OOMOL_CONNECT_DATABASE_URL?.trim();
 const dataDir = resolve(options["data-dir"] ?? process.env.OOMOL_CONNECT_DATA_DIR ?? join(process.cwd(), "data"));
 const databasePath = join(dataDir, "connect.sqlite");
-if (command === "migrate") {
+if (command === "import") {
+  const target = resolveImportTarget();
+  assertPostgresDatabaseUrl(target);
+  const pool = new Pool({
+    application_name: "open-connector-sqlite-import",
+    connectionString: target,
+    connectionTimeoutMillis: readPositiveIntegerEnv("OOMOL_CONNECT_DATABASE_CONNECT_TIMEOUT_MS", 10_000),
+    max: 1,
+  });
+  try {
+    const tenantId = parseTenantId(options.tenant!);
+    const result = await importSqliteRuntimeToPostgresTenant({
+      sourcePath: resolve(options.source!),
+      targetPool: pool,
+      tenantId,
+      tenantDisplayName: options["tenant-display-name"] ?? tenantId,
+      dryRun: options["dry-run"],
+    });
+    console.log(
+      `${result.dryRun ? "Validated" : "Imported"} ${result.totalRows} runtime rows for tenant ${result.tenantId}${
+        result.dryRun ? "; PostgreSQL was not changed." : "."
+      }`,
+    );
+  } finally {
+    await pool.end();
+  }
+} else if (command === "migrate") {
   if (!databaseUrl) {
     console.log("SQLite migrations are applied automatically when the local runtime database opens.");
   } else {
@@ -99,14 +146,39 @@ if (command === "migrate") {
 function printUsageAndExit(): never {
   console.error(`Usage:
   node scripts/runtime-data.ts migrate
+  node scripts/runtime-data.ts import --source ./data/connect.sqlite (--target <postgres-url> | --target-env <environment-variable>) --tenant <tenant-id> [--tenant-display-name <name>] [--dry-run]
   node scripts/runtime-data.ts reset --yes [--data-dir ./data]
   node scripts/runtime-data.ts rotate-key [--data-dir ./data]
   node scripts/runtime-data.ts rotate-key --plain [--data-dir ./data]
 
 Set OOMOL_CONNECT_DATABASE_URL to migrate or maintain a PostgreSQL runtime database.
 Set OOMOL_CONNECT_ENCRYPTION_KEY to read/write encrypted runtime credential records.
-Set OOMOL_CONNECT_NEW_ENCRYPTION_KEY when rotating to a new encryption key.`);
+Set OOMOL_CONNECT_NEW_ENCRYPTION_KEY when rotating to a new encryption key.
+Import copies encoded secrets without decoding them; configure the destination with the source encryption key.`);
   process.exit(1);
+}
+
+function hasImportOption(): boolean {
+  return Boolean(
+    options.source ||
+    options.target ||
+    options["target-env"] ||
+    options.tenant ||
+    options["tenant-display-name"] ||
+    options["dry-run"],
+  );
+}
+
+function resolveImportTarget(): string {
+  if (options.target) {
+    return options.target;
+  }
+  const environmentName = options["target-env"]!;
+  const value = process.env[environmentName]?.trim();
+  if (!value) {
+    throw new Error(`Import target environment variable ${environmentName} is not set.`);
+  }
+  return value;
 }
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
