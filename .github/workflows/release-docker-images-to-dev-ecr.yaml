@@ -1,0 +1,110 @@
+name: Release Docker Images to Dev ECR
+# name can not use vars
+run-name: Release Docker Images to Dev ECR for ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-docker-images-to-ecr-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-and-push:
+    name: Build and push open-connector image
+    runs-on: &machine ubuntu-latest
+    environment: aws-dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: ${{ vars.AWS_ACCOUNT_ID }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mitori/open-connector:${{ github.ref_name }}
+            ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com/mitori/open-connector:latest
+          cache-from: type=gha,scope=open-connector
+          cache-to: type=gha,mode=max,scope=open-connector
+
+  update-image-tag-for-dev:
+    name: Update image tag for dev
+    runs-on: *machine
+    needs: build-and-push
+    environment: aws-dev
+    permissions:
+      contents: read
+    steps:
+      - name: Check out open-connector
+        uses: actions/checkout@v6
+        with:
+          path: open-connector
+
+      - name: Check out mitori-infra
+        uses: actions/checkout@v6
+        with:
+          repository: mitori-ai/mitori-infra
+          ref: main
+          path: mitori-infra
+          token: ${{ secrets.MITORI_INFRA_REPO_TOKEN }}
+
+      - name: Set up workflow tools
+        shell: bash
+        run: bash open-connector/.github/scripts/setup-workflow-tools.sh
+
+      - name: Update image tag and push
+        shell: bash
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          IMAGE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          cd mitori-infra
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          overlay="argocd-eks/clusters/dev/apps/open-connector"
+          pushd "${overlay}" >/dev/null
+
+          kustomize edit set image \
+            "ghcr.io/oomol-lab/open-connector=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/mitori/open-connector:${IMAGE_TAG}"
+
+          yq eval -P -i kustomization.yaml
+          popd >/dev/null
+
+          if git diff --quiet -- "${overlay}/kustomization.yaml"; then
+            echo "open-connector kustomization.yaml already uses ${IMAGE_TAG}."
+            exit 0
+          fi
+
+          git add "${overlay}/kustomization.yaml"
+          git commit -m "[workflow][open-connector] update dev app image tag to ${IMAGE_TAG}"
+          git push origin HEAD:main

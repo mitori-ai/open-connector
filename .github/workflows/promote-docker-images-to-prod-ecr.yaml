@@ -1,0 +1,172 @@
+name: Promote Docker Images to Prod ECR
+# name can not use vars
+run-name: Promote Docker Images to Prod ECR for ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Docker image tag to promote from dev to prod, for example v1.0.0
+        required: true
+        type: string
+
+concurrency:
+  group: promote-docker-images-to-prod-ecr-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  IMAGE_TAG: ${{ inputs.tag }}
+
+jobs:
+  pull-from-dev:
+    name: Pull open-connector image from dev
+    runs-on: &machine ubuntu-latest
+    environment: aws-dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Configure AWS credentials for dev
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+
+      - name: Log in to dev Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: ${{ vars.AWS_ACCOUNT_ID }}
+
+      - name: Install skopeo
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+
+      - name: Copy image to OCI artifact
+        shell: bash
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          image="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/mitori/open-connector:${IMAGE_TAG}"
+
+          skopeo inspect --format '{{.Digest}}' "docker://${image}" > open-connector.digest
+          skopeo copy --all "docker://${image}" "oci-archive:open-connector.oci:mitori/open-connector:${IMAGE_TAG}"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: open-connector-image
+          path: |
+            open-connector.oci
+            open-connector.digest
+          if-no-files-found: error
+          retention-days: 1
+
+  push-to-prod:
+    name: Push open-connector image to prod
+    runs-on: *machine
+    needs: pull-from-dev
+    environment: aws-prod
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: open-connector-image
+
+      - name: Configure AWS credentials for prod
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+
+      - name: Log in to prod Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: ${{ vars.AWS_ACCOUNT_ID }}
+
+      - name: Install skopeo
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+
+      - name: Copy image to prod and verify digest
+        shell: bash
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          prod_image="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/mitori/open-connector:${IMAGE_TAG}"
+          latest_image="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/mitori/open-connector:latest"
+          source_digest="$(tr -d '\r\n' < open-connector.digest)"
+          skopeo copy --all "oci-archive:open-connector.oci:mitori/open-connector:${IMAGE_TAG}" "docker://${prod_image}"
+          skopeo copy --all "oci-archive:open-connector.oci:mitori/open-connector:${IMAGE_TAG}" "docker://${latest_image}"
+          destination_digest="$(skopeo inspect --format '{{.Digest}}' "docker://${prod_image}")"
+          if [[ "${destination_digest}" != "${source_digest}" ]]; then
+            echo "::error::Digest mismatch for mitori/open-connector:${IMAGE_TAG}: source=${source_digest} destination=${destination_digest}"
+            exit 1
+          fi
+          echo "Verified ${prod_image} at ${destination_digest}."
+
+  update-image-tag-for-prod:
+    name: Update image tag for prod
+    runs-on: *machine
+    needs: push-to-prod
+    environment: aws-prod
+    permissions:
+      contents: read
+    steps:
+      - name: Check out open-connector
+        uses: actions/checkout@v6
+        with:
+          path: open-connector
+
+      - name: Check out mitori-infra
+        uses: actions/checkout@v6
+        with:
+          repository: mitori-ai/mitori-infra
+          ref: prod
+          path: mitori-infra
+          token: ${{ secrets.MITORI_INFRA_REPO_TOKEN }}
+
+      - name: Set up workflow tools
+        shell: bash
+        run: bash open-connector/.github/scripts/setup-workflow-tools.sh
+
+      - name: Update image tag and push
+        shell: bash
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          IMAGE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          cd mitori-infra
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          overlay="argocd-eks/clusters/prod/apps/open-connector"
+          pushd "${overlay}" >/dev/null
+
+          kustomize edit set image \
+            "ghcr.io/oomol-lab/open-connector=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/mitori/open-connector:${IMAGE_TAG}"
+
+          yq eval -P -i kustomization.yaml
+          popd >/dev/null
+
+          if git diff --quiet -- "${overlay}/kustomization.yaml"; then
+            echo "open-connector kustomization.yaml already uses ${IMAGE_TAG}."
+            exit 0
+          fi
+
+          git add "${overlay}/kustomization.yaml"
+          git commit -m "[workflow][open-connector] update prod app image tag to ${IMAGE_TAG}"
+          git push origin HEAD:prod
