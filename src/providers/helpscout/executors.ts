@@ -5,7 +5,6 @@ import type {
   ResolvedCredential,
 } from "../../core/types.ts";
 import type { OAuthProviderContext, ProviderFetch } from "../provider-runtime.ts";
-import type { HelpscoutActionName } from "./actions.ts";
 
 import {
   compactObject,
@@ -24,11 +23,16 @@ const helpscoutResponseMaxBytes = 10 * 1024 * 1024;
 const helpscoutRequestTimeoutMs = 30_000;
 
 type HelpscoutActionHandler = (input: Record<string, unknown>, context: OAuthProviderContext) => Promise<unknown>;
+type TransportHelpscoutActionName =
+  | "get_current_user"
+  | "list_conversations"
+  | "get_conversation"
+  | "create_conversation"
+  | "update_conversation"
+  | "add_note"
+  | "reply_to_conversation";
 
-const transportHelpscoutActionHandlers: Record<
-  Extract<HelpscoutActionName, "get_current_user" | "list_conversations" | "get_conversation" | "create_conversation" | "update_conversation" | "add_note" | "reply_to_conversation">,
-  HelpscoutActionHandler
-> = {
+const transportHelpscoutActionHandlers: Record<TransportHelpscoutActionName, HelpscoutActionHandler> = {
   get_current_user(_input, context) {
     return getCurrentUser(context);
   },

@@ -14,14 +14,8 @@ const readScope = helpscoutConnectorScopes.inboxRead;
 const writeScope = helpscoutConnectorScopes.inboxWrite;
 
 const positiveId = (description: string) => s.positiveInteger(description);
-const assignableUserId = (description: string) => s.integer(description, { exclusiveMinimum: 1 });
 const rawProviderObject = (description: string) => s.looseObject(description);
 const pageSchema = s.nullable(rawProviderObject("Help Scout pagination metadata, or null."));
-const createConversationStatusSchema = s.stringEnum("The initial Help Scout conversation status.", [
-  "active",
-  "closed",
-  "pending",
-]);
 const updateConversationStatusSchema = s.stringEnum("The Help Scout conversation status.", [
   "active",
   "closed",
@@ -91,17 +85,6 @@ const transportTagListSchema = s.array(
   s.nonEmptyString("A tag name.", { maxLength: 200 }),
   { maxItems: 100, uniqueItems: true },
 );
-
-const customerIdentifierFields = {
-  customerId: positiveId("The existing Help Scout customer ID."),
-  customerEmail: s.email("The customer email address used to find or create the customer."),
-  customerFirstName: s.nonEmptyString("The first name used when a new customer is created.", {
-    maxLength: 40,
-  }),
-  customerLastName: s.nonEmptyString("The last name used when a new customer is created.", {
-    maxLength: 40,
-  }),
-};
 
 const pagedCollectionOutput = (name: string, fieldName: string) =>
   s.object(`One page of Help Scout ${name}.`, {
@@ -642,5 +625,3 @@ export const helpscoutActions: ActionDefinition[] = [
 ] as const satisfies ActionDefinition[];
 
 export type HelpscoutActionName = (typeof helpscoutActions)[number]["name"];
-
-const helpscoutActionByName = new Map(helpscoutActions.map((action) => [action.name, action] as const));
