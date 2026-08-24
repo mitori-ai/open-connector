@@ -1,4 +1,4 @@
-import type { ActionDefinition } from "../../core/types.ts";
+import type { ActionDefinition, JsonSchema } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
@@ -67,6 +67,30 @@ const currentUserSchema = s.object("The safe identity profile for the authentica
   role: s.nullableString("The authenticated user's Help Scout role."),
   companyId: s.nullableInteger("The Help Scout company ID."),
 });
+
+const transportConversationSchema = s.looseObject("A Help Scout Mailbox API conversation.");
+const transportCustomerSchema: JsonSchema = {
+  ...s.object(
+    {
+      id: s.positiveInteger("An existing Help Scout customer ID."),
+      email: s.email("The customer's email address."),
+      firstName: s.nonEmptyString("The customer's first name.", { maxLength: 40 }),
+      lastName: s.nonEmptyString("The customer's last name.", { maxLength: 40 }),
+    },
+    {
+      optional: ["id", "email", "firstName", "lastName"],
+      description: "A Help Scout customer ID or email reference. If both are provided, Help Scout uses the ID.",
+    },
+  ),
+  anyOf: [{ required: ["id"] }, { required: ["email"] }],
+};
+const transportEmailListSchema = (description: string) =>
+  s.array(description, s.email("An email address."), { minItems: 1, maxItems: 100, uniqueItems: true });
+const transportTagListSchema = s.array(
+  "The complete desired Help Scout conversation tag list.",
+  s.nonEmptyString("A tag name.", { maxLength: 200 }),
+  { maxItems: 100, uniqueItems: true },
+);
 
 const customerIdentifierFields = {
   customerId: positiveId("The existing Help Scout customer ID."),
@@ -287,12 +311,24 @@ export const helpscoutActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "update_conversation",
-    description: "Replace only the Help Scout conversation subject using the official JSON Patch operation.",
+    description:
+      "Update only documented Help Scout conversation fields: subject, assignee, and the complete tag list. Arbitrary patches are not accepted.",
     requiredScopes: [writeScope],
-    inputSchema: s.object("Input for the subject-only Help Scout conversation update.", {
-      conversationId: positiveId("The Help Scout conversation ID."),
-      subject: s.nonEmptyString("The new Help Scout conversation subject.", { maxLength: 10_000 }),
-    }),
+    inputSchema: {
+      ...s.object(
+        "Input for a documented Help Scout conversation update. Provide at least one mutable field.",
+        {
+          conversationId: positiveId("The Help Scout conversation ID."),
+          subject: s.nonEmptyString("The new Help Scout conversation subject.", { maxLength: 10_000 }),
+          assignee: s.nullable(
+            s.positiveInteger("The Help Scout user or team ID to assign; null removes the assignment."),
+          ),
+          tags: transportTagListSchema,
+        },
+        { optional: ["subject", "assignee", "tags"] },
+      ),
+      anyOf: [{ required: ["subject"] }, { required: ["assignee"] }, { required: ["tags"] }],
+    },
     outputSchema: s.object("The Help Scout conversation update result.", {
       conversationId: positiveId("The Help Scout conversation ID updated."),
       updated: s.boolean("Whether Help Scout accepted the subject update."),
@@ -395,57 +431,48 @@ export const helpscoutActions: ActionDefinition[] = [
   }),
   defineProviderAction(service, {
     name: "create_conversation",
-    description: "Create a Help Scout conversation with one initial text thread.",
+    description:
+      "Create an email conversation through the official Help Scout Mailbox API and return a GET read-back of the created conversation.",
     requiredScopes: [writeScope],
     inputSchema: s.object(
-      "Input parameters for creating a Help Scout conversation.",
+      "Input parameters for creating one Help Scout email conversation.",
       {
-        subject: s.nonEmptyString("The conversation subject."),
-        inboxId: positiveId("The Help Scout inbox where the conversation is created."),
-        ...customerIdentifierFields,
-        type: s.optional(
-          s.withDefault(s.stringEnum("The conversation channel type.", ["chat", "email", "phone"]), "email"),
+        mailboxId: positiveId("The Help Scout inbox where the conversation is created."),
+        customer: transportCustomerSchema,
+        subject: s.nonWhitespaceString("The conversation subject.", { maxLength: 10_000 }),
+        body: s.nonWhitespaceString("The initial customer message text.", { maxLength: 500_000 }),
+        cc: transportEmailListSchema(
+          "Optional email addresses copied on the initial customer thread. Help Scout does not document a top-level create cc field.",
         ),
-        status: s.optional(s.withDefault(createConversationStatusSchema, "active")),
-        threadType: s.optional(
-          s.withDefault(
-            s.stringEnum("The type of the initial conversation thread.", ["customer", "note", "reply"]),
-            "customer",
-          ),
-        ),
-        text: s.nonEmptyString("The HTML-supported text of the initial thread."),
-        userId: positiveId("The Help Scout user creating the conversation and thread."),
-        assignedUserId: assignableUserId(
-          "The Help Scout user assigned to the new conversation; Help Scout requires an ID greater than 1.",
-        ),
-        autoReply: s.boolean("Whether Help Scout should send the configured automatic reply."),
-        tagNames: s.stringArray("The tags applied to the new conversation.", {
-          itemDescription: "One Help Scout tag name.",
-        }),
-        customFields: customFieldValuesSchema,
+        tags: transportTagListSchema,
+        assignee: positiveId("The Help Scout user or team ID to assign through the official assignTo field."),
       },
-      {
-        optional: [
-          "customerId",
-          "customerEmail",
-          "customerFirstName",
-          "customerLastName",
-          "type",
-          "status",
-          "threadType",
-          "userId",
-          "assignedUserId",
-          "autoReply",
-          "tagNames",
-          "customFields",
-        ],
-      },
+      { optional: ["cc", "tags", "assignee"], required: ["mailboxId", "customer", "subject", "body"] },
     ),
     outputSchema: s.object("The Help Scout conversation creation result.", {
-      created: s.boolean("Whether Help Scout accepted the conversation creation."),
-      conversationId: s.nullableString("The created Help Scout conversation ID, or null."),
-      location: s.nullableString("The API location of the created conversation, or null."),
-      webLocation: s.nullableString("The Help Scout web URL of the conversation, or null."),
+      conversation: transportConversationSchema,
+    }),
+  }),
+  defineProviderAction(service, {
+    name: "reply_to_conversation",
+    description:
+      "Add a published reply thread through the official Help Scout Mailbox API with the customer recipient, optional CC list, and optional assignee.",
+    requiredScopes: [writeScope],
+    inputSchema: s.object(
+      "Input parameters for adding one published Help Scout reply thread.",
+      {
+        conversationId: positiveId("The Help Scout conversation ID."),
+        customer: transportCustomerSchema,
+        body: s.nonWhitespaceString("The reply thread text.", { maxLength: 500_000 }),
+        cc: transportEmailListSchema("Email addresses to CC on the reply thread."),
+        assignee: positiveId("The Help Scout user or team ID to assign after publishing the reply."),
+      },
+      { optional: ["cc", "assignee"], required: ["conversationId", "customer", "body"] },
+    ),
+    outputSchema: s.object("The created reply thread and updated conversation.", {
+      conversationId: positiveId("The Help Scout conversation ID."),
+      threadId: positiveId("The created Help Scout reply thread ID."),
+      conversation: transportConversationSchema,
     }),
   }),
   defineProviderAction(service, {
@@ -486,6 +513,20 @@ export const helpscoutActions: ActionDefinition[] = [
     outputSchema: s.object("The Help Scout note creation result.", {
       created: s.boolean("Whether Help Scout accepted the note creation."),
       threadId: s.nullableString("The created Help Scout thread ID, or null."),
+    }),
+  }),
+  defineProviderAction(service, {
+    name: "add_note",
+    description: "Add an internal note to an existing Help Scout conversation through the official notes endpoint.",
+    requiredScopes: [writeScope],
+    inputSchema: s.object("Input for adding one internal Help Scout note.", {
+      conversationId: positiveId("The Help Scout conversation ID."),
+      text: s.nonWhitespaceString("The internal note text.", { maxLength: 500_000 }),
+    }),
+    outputSchema: s.object("The result of adding an internal Help Scout note.", {
+      conversationId: positiveId("The Help Scout conversation ID."),
+      threadId: positiveId("The created Help Scout note thread ID."),
+      created: s.boolean("Whether Help Scout accepted the note."),
     }),
   }),
   defineProviderAction(service, {
