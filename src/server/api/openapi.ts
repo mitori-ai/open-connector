@@ -435,9 +435,12 @@ export function createOpenApiDocument(
             authenticated: jsonSchema.boolean({
               description: "Whether this request is authenticated for local admin APIs.",
             }),
+            sharedRuntime: jsonSchema.boolean({
+              description: "Whether this deployment enforces shared-runtime tenant isolation.",
+            }),
           },
           {
-            required: ["adminAuthConfigured", "authenticated"],
+            required: ["adminAuthConfigured", "authenticated", "sharedRuntime"],
             description: "Local web console admin authentication state.",
           },
         ),

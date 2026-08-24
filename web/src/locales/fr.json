@@ -94,6 +94,18 @@
     "token": "Token administrateur",
     "unlockConsole": "Déverrouiller la console"
   },
+  "operator": {
+    "shellTitle": "Opérateur",
+    "title": "Locataires",
+    "subtitle": "Locataires du runtime partagé.",
+    "name": "Nom",
+    "tenantId": "ID du locataire",
+    "status": "Statut",
+    "created": "Créé",
+    "disabled": "Désactivé",
+    "emptyTitle": "Aucun locataire",
+    "emptyDescription": "Aucun locataire de runtime partagé n'est provisionné."
+  },
   "overview": {
     "runtimeReady": "Runtime prêt",
     "connectedProviders": "{{count}} fournisseurs connectés",

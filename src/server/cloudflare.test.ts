@@ -120,6 +120,7 @@ describe("cloudflare worker", () => {
     await expect(response.json()).resolves.toEqual({
       adminAuthConfigured: false,
       authenticated: true,
+      sharedRuntime: false,
     });
   });
 

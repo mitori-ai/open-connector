@@ -94,6 +94,18 @@
     "token": "管理者 token",
     "unlockConsole": "コンソールを解除"
   },
+  "operator": {
+    "shellTitle": "オペレーター",
+    "title": "テナント",
+    "subtitle": "共有ランタイムのテナント。",
+    "name": "名前",
+    "tenantId": "テナント ID",
+    "status": "ステータス",
+    "created": "作成日時",
+    "disabled": "無効",
+    "emptyTitle": "テナントなし",
+    "emptyDescription": "共有ランタイムのテナントはまだありません。"
+  },
   "overview": {
     "runtimeReady": "ランタイム準備完了",
     "connectedProviders": "{{count}} 件の接続済みプロバイダー",

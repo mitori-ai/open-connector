@@ -94,6 +94,18 @@
     "token": "Admin token",
     "unlockConsole": "Unlock console"
   },
+  "operator": {
+    "shellTitle": "Operator",
+    "title": "Tenants",
+    "subtitle": "Shared runtime tenants.",
+    "name": "Name",
+    "tenantId": "Tenant ID",
+    "status": "Status",
+    "created": "Created",
+    "disabled": "Disabled",
+    "emptyTitle": "No tenants",
+    "emptyDescription": "No shared runtime tenants are provisioned."
+  },
   "overview": {
     "runtimeReady": "Runtime ready",
     "connectedProviders": "{{count}} connected providers",

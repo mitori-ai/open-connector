@@ -94,6 +94,18 @@
     "token": "管理员 token",
     "unlockConsole": "解锁控制台"
   },
+  "operator": {
+    "shellTitle": "运营管理",
+    "title": "租户",
+    "subtitle": "共享运行时租户。",
+    "name": "名称",
+    "tenantId": "租户 ID",
+    "status": "状态",
+    "created": "创建时间",
+    "disabled": "已禁用",
+    "emptyTitle": "暂无租户",
+    "emptyDescription": "尚未配置共享运行时租户。"
+  },
   "overview": {
     "runtimeReady": "运行时就绪",
     "connectedProviders": "{{count}} 个已连接提供商",

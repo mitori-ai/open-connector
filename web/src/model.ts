@@ -104,6 +104,13 @@ export interface RuntimeTokenSummary {
   lastUsedAt?: string;
 }
 
+export interface OperatorTenant {
+  id: string;
+  displayName: string;
+  createdAt: string;
+  disabledAt?: string;
+}
+
 export interface PolicyRules {
   allowedActions: string[];
   blockedActions: string[];

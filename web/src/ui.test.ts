@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppI18n } from "./i18n";
+import { emptyData } from "./model";
 import {
   App,
   loadRuntimeData,
@@ -169,6 +170,33 @@ describe("subscribeToOAuthCompletions", () => {
 });
 
 describe("loadRuntimeData", () => {
+  it("loads only operator tenants for an authenticated shared runtime", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: RequestInfo | URL) => {
+        calls.push(String(path));
+        if (path === "/api/auth/session") {
+          return Response.json({ adminAuthConfigured: true, authenticated: true, sharedRuntime: true });
+        }
+        if (path === "/api/operator/tenants") {
+          return Response.json([
+            { id: "cryofuture", displayName: "Cryofuture", createdAt: "2026-08-24T00:04:52.263Z" },
+          ]);
+        }
+        return Response.json({}, { status: 500 });
+      }),
+    );
+
+    const result = await loadRuntimeData("operator-token");
+
+    expect(calls).toEqual(["/api/auth/session", "/api/operator/tenants"]);
+    expect(result.operatorTenants).toEqual([
+      { id: "cryofuture", displayName: "Cryofuture", createdAt: "2026-08-24T00:04:52.263Z" },
+    ]);
+    expect(result.data).toBe(emptyData);
+  });
+
   it("uses the unlock token only when reading the auth session", async () => {
     const calls: Array<{ path: string; headers: Headers }> = [];
     vi.stubGlobal(

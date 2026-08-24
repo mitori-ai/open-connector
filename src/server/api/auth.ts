@@ -32,6 +32,7 @@ export interface LocalAuthOptions {
 export interface LocalAuthSession {
   adminAuthConfigured: boolean;
   authenticated: boolean;
+  sharedRuntime: boolean;
 }
 
 type AuthScope = "operator" | "tenant" | "tenant-admin" | "runtime";
@@ -128,7 +129,7 @@ function isPublicPath(path: string, method: string): boolean {
 export async function readLocalAuthSession(context: Context, options: LocalAuthOptions): Promise<LocalAuthSession> {
   const adminToken = normalizeToken(options.adminToken);
   if (!adminToken) {
-    return { adminAuthConfigured: false, authenticated: true };
+    return { adminAuthConfigured: false, authenticated: true, sharedRuntime: Boolean(options.sharedRuntime) };
   }
 
   const authenticated = await hasRequestToken(context, adminToken);
@@ -139,6 +140,7 @@ export async function readLocalAuthSession(context: Context, options: LocalAuthO
   return {
     adminAuthConfigured: true,
     authenticated,
+    sharedRuntime: Boolean(options.sharedRuntime),
   };
 }
 
