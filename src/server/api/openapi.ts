@@ -322,6 +322,30 @@ export function createOpenApiDocument(
     "/api/tenant/context": getOperation("Tenant", "Return the authenticated tenant-admin context.", {
       $ref: "#/components/schemas/TenantContext",
     }),
+    "/api/tenant/providers": getOperation("Tenant", "List provider catalog entries for the tenant console.", {
+      type: "array",
+      items: { $ref: "#/components/schemas/ProviderDefinition" },
+    }),
+    "/api/tenant/providers/{service}": getOperation("Tenant", "Get one provider for the tenant console.", {
+      $ref: "#/components/schemas/ProviderDefinition",
+    }),
+    "/api/tenant/actions": getOperation("Tenant", "List catalog actions for the tenant console.", {
+      type: "array",
+      items: { $ref: "#/components/schemas/ActionDefinition" },
+    }),
+    "/api/tenant/actions/search": getOperation("Tenant", "Search catalog actions for the tenant console.", {
+      type: "array",
+      items: { $ref: "#/components/schemas/ActionSearchResult" },
+    }),
+    "/api/tenant/actions/{actionId}": getOperation("Tenant", "Get one action for the tenant console.", {
+      $ref: "#/components/schemas/ActionDefinition",
+    }),
+    "/api/tenant/actions/{actionId}/agent.md": getOperation(
+      "Tenant",
+      "Get one markdown action guide for the tenant console.",
+      { type: "string", description: "Markdown guide for one action." },
+    ),
+    "/api/tenant/actions/{actionId}/run": createRunPath(),
     "/api/tenant/connections": getOperation("Tenant", "List connections owned by the authenticated tenant.", {
       type: "array",
       items: { $ref: "#/components/schemas/ConnectionSummary" },
@@ -339,6 +363,8 @@ export function createOpenApiDocument(
     "/api/tenant/runtime-tokens": createRuntimeTokensPath(),
     "/api/tenant/runtime-tokens/{id}": createRuntimeTokenPath(),
     "/api/operator/tenants": createOperatorTenantsPath(),
+    "/api/operator/tenants/{tenantId}/session": createOperatorTenantSessionPath(),
+    "/api/operator/tenant-session": createOperatorTenantSessionExitPath(),
     "/api/operator/tenants/{tenantId}/admin-credentials": createTenantAdminCredentialsPath(),
     "/api/operator/tenants/{tenantId}/admin-credentials/{credentialId}": createTenantAdminCredentialPath(),
     "/api/runtime-policy": createRuntimePolicyPath(),
@@ -437,6 +463,9 @@ export function createOpenApiDocument(
             }),
             sharedRuntime: jsonSchema.boolean({
               description: "Whether this deployment enforces shared-runtime tenant isolation.",
+            }),
+            tenantId: jsonSchema.string({
+              description: "Tenant selected for the current shared-runtime operator console session, when present.",
             }),
           },
           {
@@ -945,6 +974,49 @@ function createOperatorTenantsPath(): Record<string, unknown> {
       responses: {
         201: jsonResponse({ $ref: "#/components/schemas/TenantRecord" }),
         400: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),
+      },
+    },
+  };
+}
+
+function createOperatorTenantSessionPath(): Record<string, unknown> {
+  return {
+    post: {
+      tags: ["Operator"],
+      summary: "Select a tenant for the authenticated operator console session.",
+      parameters: [
+        {
+          name: "tenantId",
+          in: "path",
+          required: true,
+          schema: jsonSchema.string({ description: "Active tenant identifier." }),
+        },
+      ],
+      responses: {
+        200: jsonResponse(
+          jsonSchema.object(
+            { tenantId: jsonSchema.string({ description: "Selected tenant identifier." }) },
+            { required: ["tenantId"], description: "Selected operator tenant session." },
+          ),
+        ),
+        404: jsonResponse({ $ref: "#/components/schemas/ErrorResponse" }),
+      },
+    },
+  };
+}
+
+function createOperatorTenantSessionExitPath(): Record<string, unknown> {
+  return {
+    delete: {
+      tags: ["Operator"],
+      summary: "Clear the tenant selected for the operator console session.",
+      responses: {
+        200: jsonResponse(
+          jsonSchema.object(
+            { ok: jsonSchema.boolean() },
+            { required: ["ok"], description: "Tenant-session clear response." },
+          ),
+        ),
       },
     },
   };

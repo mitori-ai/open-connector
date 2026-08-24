@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 interface RunsPageProps {
   initialRuns: RunLog[];
   nextCursor?: string;
+  runsBasePath?: string;
   onRefresh?: () => void;
 }
 
@@ -73,7 +74,7 @@ export function RunsPage(props: RunsPageProps): ReactNode {
     setRuns([]);
     setNextCursor(undefined);
     try {
-      const page = await apiGet<RunLogPage>(runListPath({ filters: nextFilters }));
+      const page = await apiGet<RunLogPage>(runListPath({ filters: nextFilters, basePath: props.runsBasePath }));
       if (generation !== requestGeneration.current) return;
       setRuns(page.items);
       setNextCursor(page.nextCursor);
@@ -91,7 +92,7 @@ export function RunsPage(props: RunsPageProps): ReactNode {
     setLoading(true);
     setRunsError(null);
     try {
-      const page = await apiGet<RunLogPage>(runListPath({ cursor: nextCursor, filters }));
+      const page = await apiGet<RunLogPage>(runListPath({ cursor: nextCursor, filters, basePath: props.runsBasePath }));
       if (generation !== requestGeneration.current) return;
       setRuns((current) => [...current, ...page.items]);
       setNextCursor(page.nextCursor);
@@ -351,14 +352,14 @@ export function runServiceOptions(runs: RunLog[]): RunServiceOption[] {
   return [...counts.entries()].map(([service, count]) => ({ service, count }));
 }
 
-export function runListPath(input: { cursor?: string; filters: RunFilters }): string {
+export function runListPath(input: { cursor?: string; filters: RunFilters; basePath?: string }): string {
   const query = new URLSearchParams({ limit: String(runPageLimit) });
   if (input.cursor) query.set("cursor", input.cursor);
   if (input.filters.service) query.set("service", input.filters.service);
   if (input.filters.actionId) query.set("actionId", input.filters.actionId);
   if (input.filters.caller) query.set("caller", input.filters.caller);
   if (input.filters.ok !== null) query.set("ok", String(input.filters.ok));
-  return `/api/runs?${query}`;
+  return `${input.basePath ?? "/api/runs"}?${query}`;
 }
 
 export function runFiltersFromSearchParams(searchParams: URLSearchParams): RunFilters {

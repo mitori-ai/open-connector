@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { apiDelete, apiPost, apiPut } from "./api";
+import { useConsoleApiRoutes } from "./console-api";
 import { formatDate } from "./model";
 import {
   countAllowedActions,
@@ -61,6 +62,7 @@ interface AccessPageProps {
   connections: ConnectionRecord[];
   tokens: RuntimeTokenSummary[];
   policy: RuntimePolicyState;
+  policyEditable?: boolean;
   onRefresh(): void;
 }
 
@@ -105,6 +107,8 @@ export function createTokenDialogMode(created: RuntimeTokenCreation | null): "fo
 
 export function AccessPage(props: AccessPageProps): ReactNode {
   const t = useTranslate();
+  const apiRoutes = useConsoleApiRoutes();
+  const policyEditable = props.policyEditable ?? true;
   const [name, setName] = useState("");
   const [createDraft, setCreateDraft] = useState(() => createPolicyEditorDraft(emptyPolicyRules()));
   const [createConnections, setCreateConnections] = useState(() => createConnectionGrantDraft());
@@ -161,7 +165,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
     setCreated(null);
     const rules = policyRulesFromEditorDraft(createDraft);
     try {
-      const result = await apiPost<RuntimeTokenCreation>("/api/runtime-tokens", {
+      const result = await apiPost<RuntimeTokenCreation>(apiRoutes.runtimeTokens, {
         name,
         ...runtimeTokenPolicyBody(rules, createConnections),
       });
@@ -212,7 +216,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
     const rules = policyRulesFromEditorDraft(editTokenDraft);
     setTokenStatus(t("access.policy.saving"));
     try {
-      await apiPut(`/api/runtime-tokens/${editingToken.id}`, runtimeTokenPolicyBody(rules, editConnections));
+      await apiPut(`${apiRoutes.runtimeTokens}/${editingToken.id}`, runtimeTokenPolicyBody(rules, editConnections));
       setEditingToken(null);
       setTokenStatus(t("access.policy.saved"));
       props.onRefresh();
@@ -224,7 +228,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
   async function revoke(id: string): Promise<void> {
     setTokenStatus(t("access.revoking"));
     try {
-      await apiDelete(`/api/runtime-tokens/${id}`);
+      await apiDelete(`${apiRoutes.runtimeTokens}/${id}`);
       setTokenStatus(t("access.revoked"));
       props.onRefresh();
     } catch (error) {
@@ -305,7 +309,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
             <PolicyTester policy={policy} providers={props.providers} tokens={props.tokens} />
             <div className="access-settings-list">
               <PolicyLayerDisclosure rules={policy.deployment} />
-              <RuntimePolicySummary policy={policy} onEdit={startRuntimeEditing} />
+              <RuntimePolicySummary policy={policy} onEdit={policyEditable ? startRuntimeEditing : undefined} />
             </div>
             {!runtimeEditing && runtimeStatus ? <FormStatus message={runtimeStatus} /> : null}
           </div>
@@ -392,7 +396,7 @@ export function AccessPage(props: AccessPageProps): ReactNode {
           )}
         </section>
 
-        {runtimeEditing ? (
+        {policyEditable && runtimeEditing ? (
           <RuntimePolicyDialog
             draft={runtimeDraft}
             draftState={runtimeDraftState}
@@ -662,7 +666,7 @@ function PolicyLayerDisclosure(props: { rules: PolicyRules }): ReactNode {
   );
 }
 
-function RuntimePolicySummary(props: { policy: RuntimePolicyState; onEdit(): void }): ReactNode {
+function RuntimePolicySummary(props: { policy: RuntimePolicyState; onEdit?: () => void }): ReactNode {
   const t = useTranslate();
   return (
     <section className="runtime-policy-summary">
@@ -676,10 +680,12 @@ function RuntimePolicySummary(props: { policy: RuntimePolicyState; onEdit(): voi
             : ""}
         </span>
       </div>
-      <Button variant="outline" size="sm" onClick={props.onEdit}>
-        <Pencil size={15} />
-        {t("access.policy.runtimeSummary.edit")}
-      </Button>
+      {props.onEdit ? (
+        <Button variant="outline" size="sm" onClick={props.onEdit}>
+          <Pencil size={15} />
+          {t("access.policy.runtimeSummary.edit")}
+        </Button>
+      ) : null}
     </section>
   );
 }

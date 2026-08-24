@@ -251,6 +251,37 @@
   font-weight: 500;
 }
 
+.shell-context-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 7px;
+  min-height: 26px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in oklab, var(--primary) 32%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--primary) 7%, var(--background));
+  color: var(--primary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.shell-context-badge > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.shared-runtime-shell .shell-header-title h1 {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .main {
   min-width: 0;
   width: min(1600px, 100%);
@@ -365,7 +396,7 @@
   min-height: 0;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 760px) {
   .app-shell {
     display: block;
     height: auto;

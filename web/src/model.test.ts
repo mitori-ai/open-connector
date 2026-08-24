@@ -1,13 +1,20 @@
-import type { AppData, ProviderDefinition, RunLog } from "./model";
+import type { AppData, FullActionDefinition, ProviderDefinition, RunLog } from "./model";
 
 import { describe, expect, it } from "vitest";
 import {
+  buildActionExamples,
   createOverviewSummary,
   filterProvidersByCategory,
   providerCategoryCounts,
   resolveProviderConnectionStatus,
   sortProviders,
 } from "./model";
+
+const exampleAction: FullActionDefinition = {
+  ...action("gmail.send", true),
+  inputSchema: { type: "object", properties: { subject: { type: "string" } } },
+  outputSchema: { type: "object" },
+};
 
 function provider(service: string, displayName: string): ProviderDefinition {
   return {
@@ -62,6 +69,26 @@ function run(id: string, ok: boolean): RunLog {
     ok,
   };
 }
+
+describe("buildActionExamples", () => {
+  it("adds the shared runtime origin and bearer placeholder when requested", () => {
+    const examples = buildActionExamples(exampleAction, {
+      origin: "https://connector.example.test/",
+      includeRuntimeAuthorization: true,
+    });
+
+    expect(examples.curl).toContain("https://connector.example.test/v1/actions/gmail.send");
+    expect(examples.curl).toContain("authorization: Bearer YOUR_RUNTIME_API_KEY");
+    expect(examples.typescript).toContain('"authorization": "Bearer YOUR_RUNTIME_API_KEY"');
+  });
+
+  it("keeps local examples backward compatible", () => {
+    const examples = buildActionExamples(exampleAction);
+
+    expect(examples.curl).toContain("http://localhost:3000/v1/actions/gmail.send");
+    expect(examples.curl).not.toContain("authorization: Bearer");
+  });
+});
 
 describe("sortProviders", () => {
   it("places connected providers before pinned, recommended, and display-name ordering", () => {

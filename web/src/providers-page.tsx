@@ -26,6 +26,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { apiDelete, apiPost, apiPut } from "./api";
+import { useConsoleApiRoutes } from "./console-api";
 import { CredentialInput } from "./credential-input";
 import {
   credentialFieldsFor,
@@ -42,6 +43,7 @@ import {
   OAuthAppDialog,
   splitClientConfigFieldValues,
 } from "./oauth-app-form";
+import { createOAuthConsoleFlow } from "./oauth-console-flow";
 import { Badge, EmptyState, FormStatus, PageHead, ProviderIcon, TagList } from "./shared-ui";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -111,6 +113,8 @@ export interface ManualOAuthClientValues {
 export interface OAuthAuthorizationRequestBody {
   service: string;
   connectionName: string;
+  sessionCorrelation?: string;
+  returnUrl?: string;
   clientId?: string;
   clientSecret?: string;
   extra?: Record<string, string>;
@@ -1001,8 +1005,8 @@ function connectionByName(connections: ConnectionRecord[], connectionName: strin
   return connections.find((connection) => connectionNameOf(connection) === connectionName);
 }
 
-export function connectionDeletePath(service: string, connectionName: string): string {
-  return `/api/connections/${encodeURIComponent(service)}?connectionName=${encodeURIComponent(connectionName)}`;
+export function connectionDeletePath(service: string, connectionName: string, basePath = "/api/connections"): string {
+  return `${basePath}/${encodeURIComponent(service)}?connectionName=${encodeURIComponent(connectionName)}`;
 }
 
 export function credentialConnectionRequestBody(
@@ -1126,12 +1130,13 @@ function UnavailableProviderConnection(props: {
   onRefresh(): void;
 }): ReactNode {
   const t = useTranslate();
+  const apiRoutes = useConsoleApiRoutes();
   const [status, setStatus] = useState<string | null>(null);
 
   async function disconnect(): Promise<void> {
     setStatus(t("providers.connectionMessages.disconnecting"));
     try {
-      await apiDelete(connectionDeletePath(props.provider.service, props.connectionName));
+      await apiDelete(connectionDeletePath(props.provider.service, props.connectionName, apiRoutes.connections));
       setStatus(t("providers.connectionMessages.disconnected"));
       props.onRefresh();
     } catch (error) {
@@ -1163,6 +1168,7 @@ function UnavailableProviderConnection(props: {
 
 function ConnectionForm(props: ConnectionFormProps): ReactNode {
   const t = useTranslate();
+  const apiRoutes = useConsoleApiRoutes();
   const [values, setValues] = useState<Record<string, string>>({});
   const [manualClientId, setManualClientId] = useState("");
   const [manualClientSecret, setManualClientSecret] = useState("");
@@ -1236,35 +1242,34 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
         : t("providers.connectionMessages.saving"),
     );
     props.onConnectionPendingChange?.(connectionName);
+    let oauthPopup: Window | null = null;
     try {
       if (props.auth.type === "no_auth") {
         await apiPut(
-          `/api/connections/${props.provider.service}`,
+          `${apiRoutes.connections}/${props.provider.service}`,
           credentialConnectionRequestBody("no_auth", connectionName, values),
         );
       } else if (props.auth.type === "api_key") {
         await apiPut(
-          `/api/connections/${props.provider.service}`,
+          `${apiRoutes.connections}/${props.provider.service}`,
           credentialConnectionRequestBody("api_key", connectionName, values),
         );
       } else if (props.auth.type === "custom_credential") {
         await apiPut(
-          `/api/connections/${props.provider.service}`,
+          `${apiRoutes.connections}/${props.provider.service}`,
           credentialConnectionRequestBody("custom_credential", connectionName, values),
         );
       } else {
-        const result = await apiPost<{ authorizationUrl?: string }>(
-          `/api/oauth/authorizations`,
-          oauthAuthorizationRequestBody(
-            props.provider.service,
-            connectionName,
-            props.oauthClientMode === "manual" ? { auth: props.auth, values: manualValues } : undefined,
-          ),
+        const requestBody = oauthAuthorizationRequestBody(
+          props.provider.service,
+          connectionName,
+          props.oauthClientMode === "manual" ? { auth: props.auth, values: manualValues } : undefined,
         );
-        if (result.authorizationUrl) {
-          window.open(
-            result.authorizationUrl,
-            "oomol_connect_oauth",
+        if (apiRoutes.tenantScoped) {
+          const flow = createOAuthConsoleFlow(window.location.origin, props.provider.service);
+          oauthPopup = window.open(
+            "",
+            `oomol_connect_oauth_${flow.id}`,
             createOAuthPopupFeatures({
               screenX: window.screenX,
               screenY: window.screenY,
@@ -1272,6 +1277,29 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
               outerHeight: window.outerHeight,
             }),
           );
+          if (!oauthPopup) {
+            throw new Error(t("providers.connectionMessages.popupBlocked"));
+          }
+          oauthPopup.sessionStorage.setItem(flow.storageKey, flow.sessionCorrelation);
+          requestBody.sessionCorrelation = flow.sessionCorrelation;
+          requestBody.returnUrl = flow.returnUrl;
+        }
+        const result = await apiPost<{ authorizationUrl?: string }>(apiRoutes.oauthAuthorizations, requestBody);
+        if (result.authorizationUrl) {
+          if (oauthPopup) {
+            oauthPopup.location.replace(result.authorizationUrl);
+          } else {
+            window.open(
+              result.authorizationUrl,
+              "oomol_connect_oauth",
+              createOAuthPopupFeatures({
+                screenX: window.screenX,
+                screenY: window.screenY,
+                outerWidth: window.outerWidth,
+                outerHeight: window.outerHeight,
+              }),
+            );
+          }
           stopOAuthRefreshPolling.current?.();
           stopOAuthRefreshPolling.current = startOAuthRefreshPolling(props.onRefresh);
         }
@@ -1281,6 +1309,7 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
       setStatus(t("providers.connectionMessages.updated"));
       props.onRefresh();
     } catch (error) {
+      oauthPopup?.close();
       props.onConnectionPendingChange?.(undefined);
       setStatus(error instanceof Error ? error.message : t("providers.connectionMessages.failed"));
     }
@@ -1289,7 +1318,7 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
   async function disconnect(): Promise<void> {
     setStatus(t("providers.connectionMessages.disconnecting"));
     try {
-      await apiDelete(connectionDeletePath(props.provider.service, props.connectionName));
+      await apiDelete(connectionDeletePath(props.provider.service, props.connectionName, apiRoutes.connections));
       setStatus(t("providers.connectionMessages.disconnected"));
       props.onRefresh();
     } catch (error) {
