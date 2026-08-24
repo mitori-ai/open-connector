@@ -15,6 +15,7 @@ src/providers/action-contracts.generated.ts
 *.log
 *.tsbuildinfo
 data/
+tmp/
 
 # Local Xero OAuth app credentials (never commit)
 xero-credentials.json
