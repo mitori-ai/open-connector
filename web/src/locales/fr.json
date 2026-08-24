@@ -97,14 +97,25 @@
   "operator": {
     "shellTitle": "Opérateur",
     "title": "Locataires",
-    "subtitle": "Locataires du runtime partagé.",
+    "subtitle": "Sélectionnez un locataire pour gérer ses connexions, actions, exécutions et clés API.",
     "name": "Nom",
     "tenantId": "ID du locataire",
     "status": "Statut",
     "created": "Créé",
+    "actions": "Actions",
+    "manage": "Gérer",
+    "backToTenants": "Retour aux locataires",
+    "sessionFailed": "Impossible d’ouvrir la console du locataire.",
+    "exitFailed": "Impossible de revenir à la liste des locataires.",
     "disabled": "Désactivé",
     "emptyTitle": "Aucun locataire",
     "emptyDescription": "Aucun locataire de runtime partagé n'est provisionné."
+  },
+  "oauthConsole": {
+    "completing": "Enregistrement de la connexion…",
+    "complete": "Connexion enregistrée. Vous pouvez fermer cette fenêtre.",
+    "invalid": "Ce lien de finalisation OAuth est absent ou n’est plus valide.",
+    "failed": "Impossible d’enregistrer la connexion."
   },
   "overview": {
     "runtimeReady": "Runtime prêt",
@@ -228,6 +239,7 @@
       "openingOAuth": "Ouverture d’OAuth...",
       "configureOAuthFirst": "Configurez le client OAuth avant de vous connecter.",
       "oauthWindowOpened": "Fenêtre OAuth ouverte.",
+      "popupBlocked": "Autorisez les fenêtres contextuelles pour ce site, puis réessayez.",
       "updated": "Connexion mise à jour.",
       "failed": "Échec de la connexion.",
       "disconnecting": "Déconnexion...",

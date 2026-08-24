@@ -45,6 +45,8 @@ interface OAuthCompletionPageOptions {
   ok?: boolean;
   message?: string;
   returnUrl?: string;
+  autoReturn?: boolean;
+  broadcast?: boolean;
 }
 
 export function renderOAuthCompletionPage(service: string, options: OAuthCompletionPageOptions = {}): string {
@@ -192,7 +194,8 @@ code {
 </main>
 <script>(()=>{
 const STR=${scriptJson(oauthCompletionStrings)};
-if("BroadcastChannel" in window){const channel=new BroadcastChannel(${scriptJson(oauthCompletionChannelName)});channel.postMessage(${payload});channel.close();}
+${options.autoReturn && options.returnUrl ? `window.location.replace(${scriptJson(options.returnUrl)});return;` : ""}
+${options.broadcast === false ? "" : `if("BroadcastChannel" in window){const channel=new BroadcastChannel(${scriptJson(oauthCompletionChannelName)});channel.postMessage(${payload});channel.close();}`}
 const pick=()=>{const langs=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language||"en"];for(const raw of langs){const l=String(raw).toLowerCase();if(l.startsWith("zh"))return (!l.includes("hans")&&(l.includes("tw")||l.includes("hk")||l.includes("mo")||l.includes("hant")))?"zh-TW":"zh-CN";const primary=l.split("-")[0];if(STR[raw])return raw;if(STR[primary])return primary;}return "en";};
 const t=STR[pick()]||STR.en;
 document.documentElement.lang=pick();

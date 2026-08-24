@@ -15,6 +15,7 @@ import { Check, ChevronRight, Code2, Copy, ExternalLink, Loader2, Play, Search, 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { apiGet } from "./api";
+import { useConsoleApiRoutes } from "./console-api";
 import {
   buildActionExamples,
   exampleInput,
@@ -220,6 +221,7 @@ export function ActionsPage(props: ActionsPageProps): ReactNode {
 
 function ActionDetail(props: ActionDetailProps): ReactNode {
   const t = useTranslate();
+  const apiRoutes = useConsoleApiRoutes();
   const [debugOpen, setDebugOpen] = useState(false);
   // `/api/providers` omits action schemas, so the detail view loads the full
   // action on demand. Header and metadata render immediately from the summary.
@@ -232,7 +234,7 @@ function ActionDetail(props: ActionDetailProps): ReactNode {
     setFullAction(null);
     setSchemaError(null);
     setDebugOpen(false);
-    apiGet<FullActionDefinition>(`/api/actions/${encodeURIComponent(actionId)}`)
+    apiGet<FullActionDefinition>(`${apiRoutes.actions}/${encodeURIComponent(actionId)}`)
       .then((action) => {
         if (!cancelled) {
           setFullAction(action);
@@ -247,9 +249,18 @@ function ActionDetail(props: ActionDetailProps): ReactNode {
     return () => {
       cancelled = true;
     };
-  }, [actionId]);
+  }, [actionId, apiRoutes.actions]);
 
-  const examples = useMemo(() => (fullAction ? buildActionExamples(fullAction) : null), [fullAction]);
+  const examples = useMemo(
+    () =>
+      fullAction
+        ? buildActionExamples(
+            fullAction,
+            apiRoutes.tenantScoped ? { origin: window.location.origin, includeRuntimeAuthorization: true } : undefined,
+          )
+        : null,
+    [apiRoutes.tenantScoped, fullAction],
+  );
 
   return (
     <>
@@ -282,7 +293,7 @@ function ActionDetail(props: ActionDetailProps): ReactNode {
           {t("actions.debugAction")}
         </Button>
         <Button className="cc-button" asChild variant="outline" size="sm">
-          <a href={`/api/actions/${props.action.id}/agent.md`} target="_blank" rel="noreferrer">
+          <a href={`${apiRoutes.actions}/${props.action.id}/agent.md`} target="_blank" rel="noreferrer">
             <ExternalLink size={15} />
             Agent.md
           </a>
@@ -352,9 +363,10 @@ function ParameterList(props: { schema: JsonSchema }): ReactNode {
 
 function ExampleTabs(props: ExampleTabsProps): ReactNode {
   const t = useTranslate();
+  const apiRoutes = useConsoleApiRoutes();
   const [active, setActive] = useState<"curl" | "typescript" | "agent">("curl");
   const { copy, copied } = useClipboard();
-  const agent = buildAgentPrompt(props.action);
+  const agent = buildAgentPrompt(props.action, apiRoutes.actions, apiRoutes.tenantScoped);
   const tabs = [
     { id: "curl", label: "cURL", code: props.examples.curl },
     { id: "typescript", label: "TypeScript", code: props.examples.typescript },
@@ -376,7 +388,7 @@ function ExampleTabs(props: ExampleTabsProps): ReactNode {
           <div className="button-row tight">
             {active === "agent" ? (
               <Button className="cc-button" asChild variant="outline" size="sm">
-                <a href={`/api/actions/${props.action.id}/agent.md`} target="_blank" rel="noreferrer">
+                <a href={`${apiRoutes.actions}/${props.action.id}/agent.md`} target="_blank" rel="noreferrer">
                   <ExternalLink size={15} />
                   {t("actions.open")}
                 </a>
@@ -415,6 +427,7 @@ interface RunActionModalProps {
 
 function RunActionModal(props: RunActionModalProps): ReactNode {
   const t = useTranslate();
+  const apiRoutes = useConsoleApiRoutes();
   const [input, setInput] = useState(() => exampleInput(props.action.inputSchema));
   const [result, setResult] = useState<ExecutionResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -446,7 +459,7 @@ function RunActionModal(props: RunActionModalProps): ReactNode {
     setResult(null);
     try {
       const parsed = input.trim() ? (JSON.parse(input) as unknown) : {};
-      const response = await fetch(`/v1/actions/${props.action.id}`, {
+      const response = await fetch(apiRoutes.actionRun(props.action.id), {
         method: "POST",
         headers: new Headers({ "content-type": "application/json" }),
         credentials: "same-origin",
@@ -597,12 +610,19 @@ function actionConnectionLabel(connection: ConnectionRecord): string {
     : connectionName;
 }
 
-function buildAgentPrompt(action: ActionDefinition): { prompt: string } {
-  const markdownUrl = `${window.location.origin}/api/actions/${action.id}/agent.md`;
+function buildAgentPrompt(
+  action: ActionDefinition,
+  actionsBase = "/api/actions",
+  runtimeAuthenticated = false,
+): { prompt: string } {
+  const actionGuideUrl = runtimeAuthenticated
+    ? `${window.location.origin}/v1/actions/${action.id}`
+    : `${window.location.origin}${actionsBase}/${action.id}/agent.md`;
   const prompt = [
-    `Read ${markdownUrl} to discover the local request contract for ${action.name}.`,
+    `Read ${actionGuideUrl} to discover the local request contract for ${action.name}.`,
+    ...(runtimeAuthenticated ? ["Send Authorization: Bearer YOUR_RUNTIME_API_KEY with both requests."] : []),
     `Then call ${window.location.origin}/v1/actions/${action.id} with JSON shaped as { "input": ... }.`,
-    "Use the localhost runtime endpoint. Do not call the provider API directly unless I explicitly ask.",
+    "Use the connector runtime endpoint. Do not call the provider API directly unless I explicitly ask.",
   ].join("\n");
 
   return { prompt };

@@ -1,11 +1,11 @@
-import type { AuthenticatedPrincipal } from "../../core/tenant.ts";
+import type { AuthenticatedPrincipal, TenantId } from "../../core/tenant.ts";
 import type { RuntimeGrant } from "../storage/runtime-token-service.ts";
 import type { TenantCredentialService } from "../storage/tenant-credential-service.ts";
 import type { RuntimeJwtVerifier } from "./runtime-jwt.ts";
 import type { Context, MiddlewareHandler } from "hono";
 
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { compatibilityTenantId, operatorPrincipal } from "../../core/tenant.ts";
+import { compatibilityTenantId, operatorPrincipal, parseTenantId } from "../../core/tenant.ts";
 import { isConsoleShellRequest } from "./console-paths.ts";
 import { jsonError } from "./http-utils.ts";
 
@@ -14,6 +14,11 @@ const authCookieName = "oomol_connect_admin_session";
 const authCookieVersion = "v1";
 const authCookieMaxAgeSeconds = 2_592_000;
 const authCookieMaxAgeMs = authCookieMaxAgeSeconds * 1000;
+const tenantSessionCookieName = "oomol_connect_operator_tenant_session";
+const tenantSessionCookieVersion = "v1";
+const tenantSessionMaxAgeSeconds = 3_600;
+const tenantSessionMaxAgeMs = tenantSessionMaxAgeSeconds * 1000;
+const tenantSessionSecrets = new WeakMap<LocalAuthOptions, string>();
 
 /**
  * Optional API authentication for HTTP, web console, and MCP callers.
@@ -33,6 +38,7 @@ export interface LocalAuthSession {
   adminAuthConfigured: boolean;
   authenticated: boolean;
   sharedRuntime: boolean;
+  tenantId?: TenantId;
 }
 
 type AuthScope = "operator" | "tenant" | "tenant-admin" | "runtime";
@@ -141,11 +147,59 @@ export async function readLocalAuthSession(context: Context, options: LocalAuthO
     adminAuthConfigured: true,
     authenticated,
     sharedRuntime: Boolean(options.sharedRuntime),
+    tenantId: authenticated ? await readOperatorTenantSession(context, options) : undefined,
   };
 }
 
 export function clearLocalAuthCookie(context: Context): void {
   deleteCookie(context, authCookieName, {
+    httpOnly: true,
+    sameSite: "Strict",
+    secure: context.req.url.startsWith("https://"),
+    path: "/",
+  });
+  clearOperatorTenantSession(context);
+}
+
+/**
+ * Scope an authenticated operator's web console to one active tenant.
+ *
+ * The short-lived cookie contains no credential and is accepted only together
+ * with the operator's existing authenticated session.
+ */
+export async function installOperatorTenantSession(
+  context: Context,
+  options: LocalAuthOptions,
+  tenantId: TenantId,
+): Promise<void> {
+  if (
+    !options.sharedRuntime ||
+    !(await isOperatorAuthenticated(context, options)) ||
+    !(await isTenantActive(options, tenantId))
+  ) {
+    throw new Error("An authenticated operator and active shared-runtime tenant are required.");
+  }
+
+  const signingSecret = tenantSessionSigningSecret(options);
+  const payload = `${tenantSessionCookieVersion}.${Date.now()}.${tenantId}.${base64Url(
+    crypto.getRandomValues(new Uint8Array(16)),
+  )}`;
+  setCookie(
+    context,
+    tenantSessionCookieName,
+    `${payload}.${await signAuthCookiePayload(`tenant.${payload}`, signingSecret)}`,
+    {
+      httpOnly: true,
+      maxAge: tenantSessionMaxAgeSeconds,
+      sameSite: "Strict",
+      secure: context.req.url.startsWith("https://"),
+      path: "/",
+    },
+  );
+}
+
+export function clearOperatorTenantSession(context: Context): void {
+  deleteCookie(context, tenantSessionCookieName, {
     httpOnly: true,
     sameSite: "Strict",
     secure: context.req.url.startsWith("https://"),
@@ -206,8 +260,12 @@ async function resolvePrincipal(
   if (scope === "tenant-admin") {
     const token = readBearerToken(context);
     const record = token ? await options.tenantCredentials?.resolveAdminCredential(token) : undefined;
-    return record
-      ? { kind: "tenant", capability: "tenant-admin", tenantId: record.tenantId, credentialId: record.id }
+    if (record) {
+      return { kind: "tenant", capability: "tenant-admin", tenantId: record.tenantId, credentialId: record.id };
+    }
+    const tenantId = await readOperatorTenantSession(context, options);
+    return tenantId
+      ? { kind: "tenant", capability: "tenant-admin", tenantId, credentialId: "operator-session" }
       : undefined;
   }
   const token = tokenForScope(options, scope);
@@ -265,6 +323,63 @@ async function hasValidAuthCookie(context: Context, token: string): Promise<bool
 async function createAuthCookieValue(token: string): Promise<string> {
   const payload = `${authCookieVersion}.${Date.now()}.${base64Url(crypto.getRandomValues(new Uint8Array(16)))}`;
   return `${payload}.${await signAuthCookiePayload(payload, token)}`;
+}
+
+async function readOperatorTenantSession(context: Context, options: LocalAuthOptions): Promise<TenantId | undefined> {
+  if (!options.sharedRuntime || !(await isOperatorAuthenticated(context, options))) {
+    return undefined;
+  }
+  const cookie = getCookie(context, tenantSessionCookieName);
+  if (!cookie) {
+    return undefined;
+  }
+
+  const [version, issuedAt, tenantIdInput, nonce, signature, ...extra] = cookie.split(".");
+  if (
+    version !== tenantSessionCookieVersion ||
+    !issuedAt ||
+    !tenantIdInput ||
+    !nonce ||
+    !signature ||
+    extra.length > 0
+  ) {
+    return undefined;
+  }
+  const issuedAtMs = Number(issuedAt);
+  if (!Number.isFinite(issuedAtMs) || issuedAtMs > Date.now() || Date.now() - issuedAtMs > tenantSessionMaxAgeMs) {
+    return undefined;
+  }
+  let tenantId: TenantId;
+  try {
+    tenantId = parseTenantId(tenantIdInput);
+  } catch {
+    return undefined;
+  }
+  const payload = `${version}.${issuedAt}.${tenantId}.${nonce}`;
+  if (
+    !constantTimeEqual(signature, await signAuthCookiePayload(`tenant.${payload}`, tenantSessionSigningSecret(options)))
+  ) {
+    return undefined;
+  }
+  return (await isTenantActive(options, tenantId)) ? tenantId : undefined;
+}
+
+async function isOperatorAuthenticated(context: Context, options: LocalAuthOptions): Promise<boolean> {
+  const token = normalizeToken(options.adminToken);
+  return token ? await hasRequestToken(context, token) : true;
+}
+
+function tenantSessionSigningSecret(options: LocalAuthOptions): string {
+  const configured = normalizeToken(options.adminToken);
+  if (configured) {
+    return configured;
+  }
+  let secret = tenantSessionSecrets.get(options);
+  if (!secret) {
+    secret = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+    tenantSessionSecrets.set(options, secret);
+  }
+  return secret;
 }
 
 async function signAuthCookiePayload(payload: string, token: string): Promise<string> {

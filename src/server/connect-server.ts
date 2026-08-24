@@ -39,7 +39,9 @@ import { ActionRunner } from "./actions/action-runner.ts";
 import { renderActionMarkdown } from "./api/action-markdown.ts";
 import {
   clearLocalAuthCookie,
+  clearOperatorTenantSession,
   createLocalAuthMiddleware,
+  installOperatorTenantSession,
   readAuthenticatedPrincipal,
   readLocalAuthSession,
   readRuntimeGrant,
@@ -217,6 +219,17 @@ export class ConnectServer {
     app.delete("/api/runtime-tokens/:id", (context) => this.revokeRuntimeToken(context, context.req.param("id")));
 
     app.get("/api/tenant/context", (context) => this.getTenantContext(context));
+    app.get("/api/tenant/providers", (context) => this.listProviderSummaries(context));
+    app.get("/api/tenant/providers/:service", (context) => this.getProvider(context, context.req.param("service")));
+    app.get("/api/tenant/actions", (context) => context.json(this.options.catalog.actions));
+    app.get("/api/tenant/actions/search", (context) => this.searchApiActions(context));
+    app.get("/api/tenant/actions/:actionId/agent.md", (context) =>
+      this.getActionMarkdown(context, context.req.param("actionId")),
+    );
+    app.get("/api/tenant/actions/:actionId", (context) => this.getAction(context, context.req.param("actionId")));
+    app.post("/api/tenant/actions/:actionId/run", (context) =>
+      this.createRuntimeActionRun(context, context.req.param("actionId")),
+    );
     app.get("/api/tenant/connections", (context) => this.listConnections(context));
     app.put("/api/tenant/connections/:service", (context) =>
       this.upsertConnection(context, context.req.param("service")),
@@ -235,6 +248,13 @@ export class ConnectServer {
 
     app.get("/api/operator/tenants", (context) => this.listTenants(context));
     app.post("/api/operator/tenants", (context) => this.createTenant(context));
+    app.post("/api/operator/tenants/:tenantId/session", (context) =>
+      this.createOperatorTenantSession(context, auth, context.req.param("tenantId")),
+    );
+    app.delete("/api/operator/tenant-session", (context) => {
+      clearOperatorTenantSession(context);
+      return context.json({ ok: true });
+    });
     app.post("/api/operator/tenants/:tenantId/admin-credentials", (context) =>
       this.createTenantAdminCredential(context, context.req.param("tenantId")),
     );
@@ -964,7 +984,10 @@ export class ConnectServer {
             "returnUrl must be an absolute HTTPS URL without credentials or fragments.",
           );
         }
-        if (!(this.options.allowedOAuthReturnUrlOrigins ?? []).includes(parsed.origin)) {
+        if (
+          !(this.options.auth?.sharedRuntime && isConsoleOAuthReturnUrl(parsed, context.req.url)) &&
+          !(this.options.allowedOAuthReturnUrlOrigins ?? []).includes(parsed.origin)
+        ) {
           throw new OAuthFlowError("invalid_input", "returnUrl is not an allowed OAuth completion origin.");
         }
         returnUrl = parsed.toString();
@@ -1121,13 +1144,20 @@ export class ConnectServer {
               : "OAuth callback requires state and code.",
           );
         }
+        const message = providerError
+          ? "Provider authorization was cancelled or denied."
+          : "OAuth callback did not include an authorization code.";
+        const consoleReturn =
+          Boolean(this.options.auth?.sharedRuntime) &&
+          isConsoleOAuthReturnUrl(new URL(pending.returnUrl), context.req.url);
+        const returnUrl = consoleReturn ? appendOAuthError(pending.returnUrl, message) : pending.returnUrl;
         return context.html(
           renderOAuthCompletionPage(pending.service, {
             ok: false,
-            message: providerError
-              ? "Provider authorization was cancelled or denied."
-              : "OAuth callback did not include an authorization code.",
-            returnUrl: pending.returnUrl,
+            message,
+            returnUrl,
+            autoReturn: consoleReturn,
+            broadcast: !consoleReturn,
           }),
         );
       } catch (error) {
@@ -1152,8 +1182,16 @@ export class ConnectServer {
         const returnUrl = staged.returnUrl
           ? appendOAuthCompletion(staged.returnUrl, staged.completionCapability)
           : undefined;
+        const consoleReturn = returnUrl ? isConsoleOAuthReturnUrl(new URL(returnUrl), context.req.url) : false;
         this.options.logger?.info({ ...logContext, service: staged.service }, "oauth callback staged");
-        return context.html(renderOAuthCompletionPage(staged.service, { ok: true, returnUrl }));
+        return context.html(
+          renderOAuthCompletionPage(staged.service, {
+            ok: true,
+            returnUrl,
+            autoReturn: consoleReturn,
+            broadcast: !consoleReturn,
+          }),
+        );
       }
       const result = await this.options.oauthFlow.completeLocalAuthorization(state, code);
       this.options.logger?.info({ ...logContext, service: result.service }, "oauth callback completed");
@@ -1162,11 +1200,18 @@ export class ConnectServer {
       if (error instanceof OAuthFlowError || error instanceof ConnectionError) {
         this.options.logger?.warn({ ...logContext, errorCode: error.code }, "oauth callback failed");
         if (error instanceof OAuthFlowError && error.returnUrl) {
+          const message = "OAuth could not be completed. Return to the application and try again.";
+          const consoleReturn =
+            Boolean(this.options.auth?.sharedRuntime) &&
+            isConsoleOAuthReturnUrl(new URL(error.returnUrl), context.req.url);
+          const returnUrl = consoleReturn ? appendOAuthError(error.returnUrl, message) : error.returnUrl;
           return context.html(
             renderOAuthCompletionPage("OAuth", {
               ok: false,
-              message: "OAuth could not be completed. Return to the application and try again.",
-              returnUrl: error.returnUrl,
+              message,
+              returnUrl,
+              autoReturn: consoleReturn,
+              broadcast: !consoleReturn,
             }),
           );
         }
@@ -1292,6 +1337,19 @@ export class ConnectServer {
     return context.json(record, 201);
   }
 
+  private async createOperatorTenantSession(
+    context: Context,
+    auth: LocalAuthOptions,
+    tenantIdInput: string,
+  ): Promise<Response> {
+    const tenantId = parseTenantId(tenantIdInput);
+    if (!(await this.requireTenantCredentials().isTenantActive(tenantId))) {
+      return jsonError(context, 404, "tenant_not_found", "Tenant was not found or is disabled.");
+    }
+    await installOperatorTenantSession(context, auth, tenantId);
+    return context.json({ tenantId });
+  }
+
   private async createTenantAdminCredential(context: Context, tenantIdInput: string): Promise<Response> {
     const body = await readJsonBody(context);
     const name = requiredString(body.name, "name", (message) => new HttpRequestError("invalid_input", message));
@@ -1373,6 +1431,16 @@ function appendOAuthCompletion(returnUrl: string, completionCapability: string):
   const url = new URL(returnUrl);
   url.searchParams.set("oauthCompletion", completionCapability);
   return url.toString();
+}
+
+function appendOAuthError(returnUrl: string, message: string): string {
+  const url = new URL(returnUrl);
+  url.searchParams.set("oauthError", message);
+  return url.toString();
+}
+
+function isConsoleOAuthReturnUrl(returnUrl: URL, requestUrl: string): boolean {
+  return returnUrl.origin === new URL(requestUrl).origin && returnUrl.pathname === "/console/oauth-complete";
 }
 
 function hasTenantSelector(context: Context): boolean {

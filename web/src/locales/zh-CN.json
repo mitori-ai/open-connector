@@ -97,14 +97,25 @@
   "operator": {
     "shellTitle": "运营管理",
     "title": "租户",
-    "subtitle": "共享运行时租户。",
+    "subtitle": "选择租户以管理其连接、操作、运行记录和 API 密钥。",
     "name": "名称",
     "tenantId": "租户 ID",
     "status": "状态",
     "created": "创建时间",
+    "actions": "操作",
+    "manage": "管理",
+    "backToTenants": "返回租户列表",
+    "sessionFailed": "无法打开租户控制台。",
+    "exitFailed": "无法返回租户列表。",
     "disabled": "已禁用",
     "emptyTitle": "暂无租户",
     "emptyDescription": "尚未配置共享运行时租户。"
+  },
+  "oauthConsole": {
+    "completing": "正在保存连接…",
+    "complete": "连接已保存，可以关闭此窗口。",
+    "invalid": "此 OAuth 完成链接缺失或已失效。",
+    "failed": "无法保存连接。"
   },
   "overview": {
     "runtimeReady": "运行时就绪",
@@ -228,6 +239,7 @@
       "openingOAuth": "正在打开 OAuth...",
       "configureOAuthFirst": "请先配置 OAuth client 再连接。",
       "oauthWindowOpened": "OAuth 窗口已打开。",
+      "popupBlocked": "请允许此网站打开弹窗，然后重试连接。",
       "updated": "连接已更新。",
       "failed": "连接失败。",
       "disconnecting": "正在断开连接...",

@@ -13,6 +13,7 @@ import type { ReactNode, SubmitEvent } from "react";
 import { useTranslate } from "@embra/i18n/react";
 import {
   Activity,
+  ArrowLeft,
   BookOpen,
   Building2,
   Cable,
@@ -28,10 +29,17 @@ import { useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router";
 import { AccessPage } from "./access-page";
 import { ActionsPage } from "./actions-page";
-import { ApiError, apiGet, apiPost } from "./api";
+import { ApiError, apiDelete, apiGet, apiPost } from "./api";
 import mitoriMarkUrl from "./assets/mitori-mark.png";
+import { ConsoleApiProvider, consoleApiRoutes } from "./console-api";
 import { emptyData } from "./model";
 import { OAuthAppsPage } from "./oauth-apps-page";
+import {
+  oauthCompletedType,
+  oauthCompletionChannelName,
+  oauthConsoleCompletionPath,
+  oauthConsoleStorageKey,
+} from "./oauth-console-flow";
 import { OperatorPage } from "./operator-page";
 import { OverviewPage } from "./overview-page";
 import { ProvidersPage } from "./providers-page";
@@ -53,13 +61,19 @@ const navItems = [
   { path: "/resources", labelKey: "nav.docs", icon: BookOpen },
 ] as const;
 
-const oauthCompletionChannelName = "oomol-connect-oauth";
-const oauthCompletedType = "oauth.completed";
+const operatorNavItems = [
+  { path: "/overview", labelKey: "operator.title", icon: Building2 },
+  { path: "/oauth-apps", labelKey: "nav.oauthApps", icon: Fingerprint },
+  { path: "/resources", labelKey: "nav.docs", icon: BookOpen },
+] as const;
+
+const tenantNavItems = navItems.filter((item) => item.path !== "/oauth-apps");
 
 export interface AuthSession {
   adminAuthConfigured: boolean;
   authenticated: boolean;
   sharedRuntime?: boolean;
+  tenantId?: string;
 }
 
 export interface OAuthCompletionMessage {
@@ -140,8 +154,48 @@ export async function loadRuntimeData(
   }
 
   if (authSession.sharedRuntime) {
-    const operatorTenants = await apiGet<OperatorTenant[]>("/api/operator/tenants");
-    return { authSession, data: emptyData, operatorTenants };
+    const tenantScoped = Boolean(authSession.tenantId);
+    const apiRoutes = consoleApiRoutes(tenantScoped);
+    const catalogRequest =
+      cachedProviders !== undefined
+        ? Promise.resolve(cachedProviders)
+        : apiGet<ProviderDefinition[]>(apiRoutes.providers);
+    if (!tenantScoped) {
+      const [operatorTenants, providers, oauthConfigs] = await Promise.all([
+        apiGet<OperatorTenant[]>("/api/operator/tenants"),
+        catalogRequest,
+        apiGet<OAuthConfig[]>("/api/oauth/configs"),
+      ]);
+      return {
+        authSession,
+        data: { ...emptyData, providers, oauthConfigs },
+        operatorTenants,
+      };
+    }
+
+    const [operatorTenants, providers, connections, oauthConfigs, runtimeTokens, runtimePolicy, runPage] =
+      await Promise.all([
+        apiGet<OperatorTenant[]>("/api/operator/tenants"),
+        catalogRequest,
+        apiGet<ConnectionRecord[]>(apiRoutes.connections),
+        apiGet<OAuthConfig[]>("/api/oauth/configs"),
+        apiGet<RuntimeTokenSummary[]>(apiRoutes.runtimeTokens),
+        apiGet<RuntimePolicyState>("/api/runtime-policy"),
+        apiGet<RunLogPage>(apiRoutes.runs),
+      ]);
+    return {
+      authSession,
+      data: {
+        providers,
+        connections,
+        oauthConfigs,
+        runtimeTokens,
+        runtimePolicy,
+        runs: runPage.items,
+        runsNextCursor: runPage.nextCursor,
+      },
+      operatorTenants,
+    };
   }
 
   const catalogRequest =
@@ -172,9 +226,13 @@ export async function loadRuntimeData(
 }
 
 export function App(): ReactNode {
-  const t = useTranslate();
-  // Keep the existing automatic theme application without exposing theme controls in the UI.
   useThemeMode();
+  const location = useLocation();
+  return location.pathname === oauthConsoleCompletionPath ? <TenantOAuthCompletionView /> : <ConsoleApp />;
+}
+
+function ConsoleApp(): ReactNode {
+  const t = useTranslate();
   const [data, setData] = useState<AppData>(emptyData);
   const [operatorTenants, setOperatorTenants] = useState<OperatorTenant[]>([]);
   const [authSession, setAuthSession] = useState<AuthSession>({
@@ -274,6 +332,28 @@ export function App(): ReactNode {
       });
   }
 
+  function selectTenant(tenantId: string): void {
+    setLoading(true);
+    setError(null);
+    void apiPost(`/api/operator/tenants/${encodeURIComponent(tenantId)}/session`, {})
+      .then(() => refresh())
+      .catch((caught: unknown) => {
+        setLoading(false);
+        setError(caught instanceof Error ? caught.message : t("operator.sessionFailed"));
+      });
+  }
+
+  function exitTenant(): void {
+    setLoading(true);
+    setError(null);
+    void apiDelete("/api/operator/tenant-session")
+      .then(() => refresh())
+      .catch((caught: unknown) => {
+        setLoading(false);
+        setError(caught instanceof Error ? caught.message : t("operator.exitFailed"));
+      });
+  }
+
   if (locked) {
     return <UnlockView loading={loading} message={error} onUnlock={unlock} />;
   }
@@ -282,15 +362,107 @@ export function App(): ReactNode {
     return <InitialLoadingView />;
   }
 
+  const activeTenant = authSession.tenantId
+    ? operatorTenants.find((tenant) => tenant.id === authSession.tenantId)
+    : undefined;
+
   return (
     <AppShell
       data={data}
       operatorTenants={authSession.sharedRuntime ? operatorTenants : undefined}
+      activeTenant={activeTenant}
       loading={loading}
       error={error}
       onRefresh={refresh}
       onLogout={logout}
+      onSelectTenant={selectTenant}
+      onExitTenant={exitTenant}
     />
+  );
+}
+
+type OAuthCompletionStatus = "completing" | "complete" | "error";
+
+function TenantOAuthCompletionView(): ReactNode {
+  const t = useTranslate();
+  const location = useLocation();
+  const [status, setStatus] = useState<OAuthCompletionStatus>("completing");
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    const query = new URLSearchParams(location.search);
+    const flowId = query.get("flow") ?? "";
+    const service = query.get("service") ?? "";
+    const completionCapability = query.get("oauthCompletion") ?? "";
+    const providerError = query.get("oauthError");
+
+    if (providerError) {
+      setStatus("error");
+      setMessage(providerError);
+      return () => {};
+    }
+
+    const storageKey = oauthConsoleStorageKey(flowId);
+    const sessionCorrelation = flowId ? window.sessionStorage.getItem(storageKey) : null;
+    if (!flowId || !service || !completionCapability || !sessionCorrelation) {
+      setStatus("error");
+      setMessage(t("oauthConsole.invalid"));
+      return () => {};
+    }
+
+    void apiPost("/api/tenant/oauth/completions", { completionCapability, sessionCorrelation })
+      .then(() => {
+        if (cancelled) {
+          return;
+        }
+        window.sessionStorage.removeItem(storageKey);
+        if (typeof BroadcastChannel !== "undefined") {
+          const channel = new BroadcastChannel(oauthCompletionChannelName);
+          channel.postMessage({ type: oauthCompletedType, service } satisfies OAuthCompletionMessage);
+          channel.close();
+        }
+        setStatus("complete");
+        closeTimer = setTimeout(() => window.close(), 750);
+      })
+      .catch((caught: unknown) => {
+        if (!cancelled) {
+          setStatus("error");
+          setMessage(caught instanceof Error ? caught.message : t("oauthConsole.failed"));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+      }
+    };
+  }, [location.search, t]);
+
+  return (
+    <main className="unlock-screen">
+      <section className="unlock-panel">
+        <div className="brand">
+          <img className="brand-mark" src={mitoriMarkUrl} alt="" />
+          <div>
+            <div className="brand-name">Mitori</div>
+            <div className="brand-subtitle">{t("brand.adminAccess")}</div>
+          </div>
+        </div>
+        {status === "completing" ? (
+          <div className="loading-panel">
+            <Loader2 className="spin" size={16} />
+            {t("oauthConsole.completing")}
+          </div>
+        ) : status === "complete" ? (
+          <div className="loading-panel">{t("oauthConsole.complete")}</div>
+        ) : (
+          <InlineError message={message ?? t("oauthConsole.failed")} />
+        )}
+      </section>
+    </main>
   );
 }
 
@@ -310,10 +482,13 @@ function InitialLoadingView(): ReactNode {
 function AppShell(props: {
   data: AppData;
   operatorTenants?: OperatorTenant[];
+  activeTenant?: OperatorTenant;
   loading: boolean;
   error: string | null;
   onRefresh(): void;
   onLogout(): void;
+  onSelectTenant(tenantId: string): void;
+  onExitTenant(): void;
 }): ReactNode {
   const t = useTranslate();
   const location = useLocation();
@@ -322,10 +497,10 @@ function AppShell(props: {
   const isOverviewPage = heading === "overview";
   const isBrowserPage = section === "actions" || section === "runs";
   const isRunsPage = section === "runs";
-  const operatorMode = props.operatorTenants !== undefined;
-  const visibleNavItems = operatorMode
-    ? [{ path: "/overview", labelKey: "operator.title", icon: Building2 }]
-    : navItems;
+  const sharedRuntime = props.operatorTenants !== undefined;
+  const tenantMode = sharedRuntime && props.activeTenant !== undefined;
+  const operatorMode = sharedRuntime && !tenantMode;
+  const visibleNavItems = operatorMode ? operatorNavItems : tenantMode ? tenantNavItems : navItems;
   const mainClassName = [
     isBrowserPage ? "main main-browser" : "main",
     isOverviewPage ? "overview-main" : "",
@@ -390,8 +565,14 @@ function AppShell(props: {
       <div className={isBrowserPage ? "main-region main-region-browser" : "main-region"}>
         <header className="shell-header">
           <div className="shell-header-title">
-            <h1>{operatorMode ? t("operator.shellTitle") : "Setup Agent"}</h1>
+            <h1>{operatorMode ? t("operator.shellTitle") : (props.activeTenant?.displayName ?? "Setup Agent")}</h1>
           </div>
+          {tenantMode ? (
+            <Button className="cc-button" variant="outline" size="sm" onClick={props.onExitTenant}>
+              <ArrowLeft size={15} />
+              {t("operator.backToTenants")}
+            </Button>
+          ) : null}
           {props.loading ? (
             <div className="loading-panel page-loading">
               <Loader2 className="spin" size={16} />
@@ -403,62 +584,77 @@ function AppShell(props: {
         <main className={mainClassName}>
           {props.error ? <InlineError message={props.error} /> : null}
 
-          <Routes>
-            <Route index element={<Navigate to="/overview" replace />} />
-            <Route
-              path="/overview"
-              element={
-                operatorMode ? (
-                  <OperatorPage
-                    tenants={props.operatorTenants ?? []}
-                    loading={props.loading}
-                    onRefresh={props.onRefresh}
+          <ConsoleApiProvider tenantScoped={tenantMode}>
+            <Routes>
+              <Route index element={<Navigate to="/overview" replace />} />
+              <Route
+                path="/overview"
+                element={
+                  operatorMode ? (
+                    <OperatorPage
+                      tenants={props.operatorTenants ?? []}
+                      loading={props.loading}
+                      onRefresh={props.onRefresh}
+                      onSelectTenant={props.onSelectTenant}
+                    />
+                  ) : (
+                    <OverviewPage data={props.data} onRefresh={props.onRefresh} />
+                  )
+                }
+              />
+              {operatorMode ? (
+                <>
+                  <Route path="/oauth-apps" element={<OAuthAppsPage data={props.data} onRefresh={props.onRefresh} />} />
+                  <Route path="/resources" element={<ResourcesPage />} />
+                </>
+              ) : (
+                <>
+                  <Route path="/providers" element={<ProvidersPage data={props.data} onRefresh={props.onRefresh} />} />
+                  <Route
+                    path="/providers/:service"
+                    element={<ProvidersPage data={props.data} onRefresh={props.onRefresh} />}
                   />
-                ) : (
-                  <OverviewPage data={props.data} onRefresh={props.onRefresh} />
-                )
-              }
-            />
-            {operatorMode ? null : (
-              <>
-                <Route path="/providers" element={<ProvidersPage data={props.data} onRefresh={props.onRefresh} />} />
-                <Route
-                  path="/providers/:service"
-                  element={<ProvidersPage data={props.data} onRefresh={props.onRefresh} />}
-                />
-                <Route path="/oauth-apps" element={<OAuthAppsPage data={props.data} onRefresh={props.onRefresh} />} />
-                <Route path="/actions" element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />} />
-                <Route
-                  path="/actions/:actionId"
-                  element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />}
-                />
-                <Route
-                  path="/runs"
-                  element={
-                    <RunsPage
-                      initialRuns={props.data.runs}
-                      nextCursor={props.data.runsNextCursor}
-                      onRefresh={props.onRefresh}
+                  {!tenantMode ? (
+                    <Route
+                      path="/oauth-apps"
+                      element={<OAuthAppsPage data={props.data} onRefresh={props.onRefresh} />}
                     />
-                  }
-                />
-                <Route
-                  path="/access"
-                  element={
-                    <AccessPage
-                      providers={props.data.providers}
-                      connections={props.data.connections}
-                      tokens={props.data.runtimeTokens}
-                      policy={props.data.runtimePolicy ?? emptyData.runtimePolicy!}
-                      onRefresh={props.onRefresh}
-                    />
-                  }
-                />
-                <Route path="/resources" element={<ResourcesPage />} />
-              </>
-            )}
-            <Route path="*" element={<Navigate to="/overview" replace />} />
-          </Routes>
+                  ) : null}
+                  <Route path="/actions" element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />} />
+                  <Route
+                    path="/actions/:actionId"
+                    element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />}
+                  />
+                  <Route
+                    path="/runs"
+                    element={
+                      <RunsPage
+                        initialRuns={props.data.runs}
+                        nextCursor={props.data.runsNextCursor}
+                        runsBasePath={consoleApiRoutes(tenantMode).runs}
+                        onRefresh={props.onRefresh}
+                      />
+                    }
+                  />
+                  <Route
+                    path="/access"
+                    element={
+                      <AccessPage
+                        providers={props.data.providers}
+                        connections={props.data.connections}
+                        tokens={props.data.runtimeTokens}
+                        policy={props.data.runtimePolicy ?? emptyData.runtimePolicy!}
+                        policyEditable={!tenantMode}
+                        onRefresh={props.onRefresh}
+                      />
+                    }
+                  />
+                  <Route path="/resources" element={<ResourcesPage />} />
+                </>
+              )}
+              <Route path="*" element={<Navigate to="/overview" replace />} />
+            </Routes>
+          </ConsoleApiProvider>
         </main>
       </div>
     </div>

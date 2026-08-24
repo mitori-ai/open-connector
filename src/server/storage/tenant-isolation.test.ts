@@ -162,6 +162,75 @@ describe("shared runtime tenant isolation", () => {
     database.close();
   });
 
+  it("lets an operator explicitly scope the console without opening the runtime plane", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "open-connector-operator-console-"));
+    temporaryDirectories.push(directory);
+    const database = new SqliteRuntimeDatabase(join(directory, "runtime.sqlite"));
+    const credentials = new TenantCredentialService(database.tenantCredentialStore);
+    await credentials.createTenant({ id: tenantA, displayName: "Tenant A", createdAt: new Date().toISOString() });
+    await credentials.createTenant({ id: tenantB, displayName: "Tenant B", createdAt: new Date().toISOString() });
+    const tokens = new RuntimeTokenService(database.runtimeTokenStore, database.connectionStore);
+    await tokens.createToken("runtime-a", undefined, tenantA);
+    const { app } = await createSharedTestApp(directory, database, {
+      sharedRuntime: true,
+      adminToken: "operator-secret",
+    });
+
+    const authenticated = await app.request("/api/auth/session", {
+      headers: { authorization: "Bearer operator-secret" },
+    });
+    const operatorCookie = authenticated.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect(operatorCookie).toContain("oomol_connect_admin_session=");
+    expect((await app.request("/api/tenant/context", { headers: { cookie: operatorCookie } })).status).toBe(401);
+
+    const selected = await app.request(`/api/operator/tenants/${tenantA}/session`, {
+      method: "POST",
+      headers: { cookie: operatorCookie },
+    });
+    expect(selected.status, await selected.clone().text()).toBe(200);
+    const tenantCookie = selected.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect(tenantCookie).toContain("oomol_connect_operator_tenant_session=");
+    expect(tenantCookie).not.toContain("operator-secret");
+    const scopedCookies = `${operatorCookie}; ${tenantCookie}`;
+
+    const session = await app.request("/api/auth/session", { headers: { cookie: scopedCookies } });
+    await expect(session.json()).resolves.toEqual({
+      adminAuthConfigured: true,
+      authenticated: true,
+      sharedRuntime: true,
+      tenantId: tenantA,
+    });
+    const context = await app.request("/api/tenant/context", { headers: { cookie: scopedCookies } });
+    await expect(context.json()).resolves.toEqual({ tenantId: tenantA, capability: "tenant-admin" });
+    expect((await app.request("/api/tenant/providers", { headers: { cookie: scopedCookies } })).status).toBe(200);
+    expect((await app.request("/api/tenant/actions", { headers: { cookie: scopedCookies } })).status).toBe(200);
+    expect((await app.request("/api/tenant/runtime-tokens", { headers: { cookie: scopedCookies } })).status).toBe(200);
+    expect((await app.request("/v1/principal", { headers: { cookie: scopedCookies } })).status).toBe(401);
+    const tamperedCookies = `${operatorCookie}; ${tenantCookie.replace(String(tenantA), String(tenantB))}`;
+    expect((await app.request("/api/tenant/context", { headers: { cookie: tamperedCookies } })).status).toBe(401);
+
+    const exited = await app.request("/api/operator/tenant-session", {
+      method: "DELETE",
+      headers: { cookie: scopedCookies },
+    });
+    expect(exited.status).toBe(200);
+    expect(exited.headers.get("set-cookie")).toContain("oomol_connect_operator_tenant_session=;");
+    expect((await app.request("/api/operator/tenants", { headers: { cookie: operatorCookie } })).status).toBe(200);
+    expect((await app.request("/api/tenant/context", { headers: { cookie: operatorCookie } })).status).toBe(401);
+
+    const { app: openOperatorApp } = await createSharedTestApp(directory, database, { sharedRuntime: true });
+    const openSelection = await openOperatorApp.request(`/api/operator/tenants/${tenantA}/session`, {
+      method: "POST",
+    });
+    const openTenantCookie = openSelection.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect(openSelection.status).toBe(200);
+    expect(
+      (await openOperatorApp.request("/api/tenant/context", { headers: { cookie: openTenantCookie } })).status,
+    ).toBe(200);
+
+    database.close();
+  });
+
   it("isolates same-alias connections, grants, OAuth, runs, idempotency, and transit files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "open-connector-tenant-"));
     temporaryDirectories.push(directory);
@@ -417,6 +486,60 @@ describe("shared runtime tenant isolation", () => {
       credential: { accessToken: "tenant-a-access" },
     });
     await expect(database.connectionStore.get("gmail", "default", tenantB)).resolves.toBeUndefined();
+
+    const consoleReturnUrl = "http://localhost/console/oauth-complete?flow=flow-a&service=gmail";
+    const consoleStart = await app.request("/api/tenant/oauth/authorizations", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminA.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        service: "gmail",
+        connectionName: "console",
+        returnUrl: consoleReturnUrl,
+        sessionCorrelation: "console-session-a",
+      }),
+    });
+    expect(consoleStart.status, await consoleStart.clone().text()).toBe(200);
+    const consoleState = ((await consoleStart.json()) as { state: string }).state;
+    const consoleCallback = await app.request(`/oauth/callback?state=${consoleState}&code=console-code`);
+    const consoleHtml = await consoleCallback.text();
+    expect(consoleHtml).toContain("window.location.replace");
+    expect(consoleHtml).not.toContain("new BroadcastChannel");
+    const redirectValue = consoleHtml.match(/window\.location\.replace\(("[^"]+")\)/)?.[1];
+    const consoleCompletionUrl = redirectValue ? new URL(JSON.parse(redirectValue) as string) : undefined;
+    expect(consoleCompletionUrl?.pathname).toBe("/console/oauth-complete");
+    const consoleCapability = consoleCompletionUrl?.searchParams.get("oauthCompletion");
+    const consoleComplete = await app.request("/api/tenant/oauth/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${adminA.credential}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        completionCapability: consoleCapability,
+        sessionCorrelation: "console-session-a",
+      }),
+    });
+    expect(consoleComplete.status, await consoleComplete.clone().text()).toBe(200);
+    await expect(database.connectionStore.get("gmail", "console", tenantA)).resolves.toBeDefined();
+
+    const cancelledStart = await app.request("/api/tenant/oauth/authorizations", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminA.credential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        service: "gmail",
+        connectionName: "cancelled",
+        returnUrl: consoleReturnUrl,
+        sessionCorrelation: "cancelled-session-a",
+      }),
+    });
+    const cancelledState = ((await cancelledStart.json()) as { state: string }).state;
+    const cancelledCallback = await app.request(`/oauth/callback?state=${cancelledState}&error=access_denied`);
+    const cancelledHtml = await cancelledCallback.text();
+    expect(cancelledHtml).toContain("window.location.replace");
+    expect(cancelledHtml).toContain("oauthError");
     database.close();
   });
 });

@@ -41,4 +41,17 @@ describe("renderOAuthCompletionPage", () => {
     expect(html).toContain('href="https://control.dev.mitori.ai/client/agents/demo/access?access_return=oauth"');
     expect(html).toContain("Provider denied access.");
   });
+
+  it("hands same-origin console completions back without broadcasting early", () => {
+    const returnUrl =
+      "https://connector.example.test/console/oauth-complete?flow=flow-a&service=gmail&oauthCompletion=secret";
+    const html = renderOAuthCompletionPage("gmail", {
+      returnUrl,
+      autoReturn: true,
+      broadcast: false,
+    });
+
+    expect(html).toContain(`window.location.replace(${JSON.stringify(returnUrl)})`);
+    expect(html).not.toContain("new BroadcastChannel");
+  });
 });

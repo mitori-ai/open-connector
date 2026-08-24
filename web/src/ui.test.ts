@@ -6,7 +6,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppI18n } from "./i18n";
-import { emptyData } from "./model";
 import {
   App,
   loadRuntimeData,
@@ -170,7 +169,7 @@ describe("subscribeToOAuthCompletions", () => {
 });
 
 describe("loadRuntimeData", () => {
-  it("loads only operator tenants for an authenticated shared runtime", async () => {
+  it("loads operator inventory without tenant data for an authenticated shared runtime", async () => {
     const calls: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -184,17 +183,69 @@ describe("loadRuntimeData", () => {
             { id: "cryofuture", displayName: "Cryofuture", createdAt: "2026-08-24T00:04:52.263Z" },
           ]);
         }
+        if (path === "/api/providers") {
+          return Response.json([{ service: "gmail", displayName: "Gmail" }]);
+        }
+        if (path === "/api/oauth/configs") {
+          return Response.json([]);
+        }
         return Response.json({}, { status: 500 });
       }),
     );
 
     const result = await loadRuntimeData("operator-token");
 
-    expect(calls).toEqual(["/api/auth/session", "/api/operator/tenants"]);
+    expect(calls).toEqual(["/api/auth/session", "/api/providers", "/api/operator/tenants", "/api/oauth/configs"]);
     expect(result.operatorTenants).toEqual([
       { id: "cryofuture", displayName: "Cryofuture", createdAt: "2026-08-24T00:04:52.263Z" },
     ]);
-    expect(result.data).toBe(emptyData);
+    expect(result.data.providers).toEqual([{ service: "gmail", displayName: "Gmail" }]);
+    expect(result.data.connections).toEqual([]);
+  });
+
+  it("loads tenant-scoped console data after the operator selects a tenant", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: RequestInfo | URL) => {
+        calls.push(String(path));
+        if (path === "/api/auth/session") {
+          return Response.json({
+            adminAuthConfigured: true,
+            authenticated: true,
+            sharedRuntime: true,
+            tenantId: "cryofuture",
+          });
+        }
+        if (path === "/api/operator/tenants") {
+          return Response.json([
+            { id: "cryofuture", displayName: "Cryofuture", createdAt: "2026-08-24T00:04:52.263Z" },
+          ]);
+        }
+        if (path === "/api/runtime-policy") {
+          const rules = { allowedActions: [], blockedActions: [], allowedProxies: [], blockedProxies: [] };
+          return Response.json({ deployment: rules, runtime: rules });
+        }
+        if (path === "/api/tenant/runs") {
+          return Response.json({ items: [], nextCursor: null });
+        }
+        return Response.json([]);
+      }),
+    );
+
+    const result = await loadRuntimeData("");
+
+    expect(calls).toEqual([
+      "/api/auth/session",
+      "/api/tenant/providers",
+      "/api/operator/tenants",
+      "/api/tenant/connections",
+      "/api/oauth/configs",
+      "/api/tenant/runtime-tokens",
+      "/api/runtime-policy",
+      "/api/tenant/runs",
+    ]);
+    expect(result.authSession.tenantId).toBe("cryofuture");
   });
 
   it("uses the unlock token only when reading the auth session", async () => {
