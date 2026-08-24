@@ -1,9 +1,26 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { compatibilityTenantId } from "../../core/tenant.ts";
-import { createLocalAuthMiddleware } from "./auth.ts";
+import { createLocalAuthMiddleware, readLocalAuthSession } from "./auth.ts";
 
 describe("createLocalAuthMiddleware", () => {
+  it("reports shared runtime mode in the admin session", async () => {
+    const app = new Hono();
+    const options = { adminToken: "admin-secret", sharedRuntime: true };
+    app.get("/api/auth/session", async (context) => context.json(await readLocalAuthSession(context, options)));
+
+    const response = await app.request("/api/auth/session", {
+      headers: { authorization: "Bearer admin-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      adminAuthConfigured: true,
+      authenticated: true,
+      sharedRuntime: true,
+    });
+  });
+
   it("fails closed when a runtime token resolver is configured without a token-count callback", async () => {
     const app = new Hono();
     app.use(

@@ -94,6 +94,18 @@
     "token": "管理員權杖",
     "unlockConsole": "解鎖控制台"
   },
+  "operator": {
+    "shellTitle": "營運管理",
+    "title": "租戶",
+    "subtitle": "共享執行階段租戶。",
+    "name": "名稱",
+    "tenantId": "租戶 ID",
+    "status": "狀態",
+    "created": "建立時間",
+    "disabled": "已停用",
+    "emptyTitle": "沒有租戶",
+    "emptyDescription": "尚未設定共享執行階段租戶。"
+  },
   "overview": {
     "runtimeReady": "執行階段已就緒",
     "connectedProviders": "已連線 {{count}} 個服務提供者",

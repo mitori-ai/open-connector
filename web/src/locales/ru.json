@@ -94,6 +94,18 @@
     "token": "Администраторский token",
     "unlockConsole": "Разблокировать консоль"
   },
+  "operator": {
+    "shellTitle": "Оператор",
+    "title": "Тенанты",
+    "subtitle": "Тенанты общей среды выполнения.",
+    "name": "Имя",
+    "tenantId": "ID тенанта",
+    "status": "Статус",
+    "created": "Создан",
+    "disabled": "Отключен",
+    "emptyTitle": "Нет тенантов",
+    "emptyDescription": "Тенанты общей среды выполнения не настроены."
+  },
   "overview": {
     "runtimeReady": "Runtime готов",
     "connectedProviders": "{{count}} подключенных провайдеров",

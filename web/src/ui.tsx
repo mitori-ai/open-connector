@@ -2,6 +2,7 @@ import type {
   AppData,
   ConnectionRecord,
   OAuthConfig,
+  OperatorTenant,
   ProviderDefinition,
   RunLogPage,
   RuntimePolicyState,
@@ -13,6 +14,7 @@ import { useTranslate } from "@embra/i18n/react";
 import {
   Activity,
   BookOpen,
+  Building2,
   Cable,
   Fingerprint,
   Home,
@@ -30,6 +32,7 @@ import { ApiError, apiGet, apiPost } from "./api";
 import mitoriMarkUrl from "./assets/mitori-mark.png";
 import { emptyData } from "./model";
 import { OAuthAppsPage } from "./oauth-apps-page";
+import { OperatorPage } from "./operator-page";
 import { OverviewPage } from "./overview-page";
 import { ProvidersPage } from "./providers-page";
 import { ResourcesPage } from "./resources-page";
@@ -56,6 +59,7 @@ const oauthCompletedType = "oauth.completed";
 export interface AuthSession {
   adminAuthConfigured: boolean;
   authenticated: boolean;
+  sharedRuntime?: boolean;
 }
 
 export interface OAuthCompletionMessage {
@@ -116,6 +120,7 @@ export function nextAuthLoadState(state: AuthLoadState, session: AuthSession): A
 export interface RuntimeLoadResult {
   authSession: AuthSession;
   data: AppData;
+  operatorTenants: OperatorTenant[];
 }
 
 /**
@@ -131,7 +136,12 @@ export async function loadRuntimeData(
 ): Promise<RuntimeLoadResult> {
   const authSession = await apiGet<AuthSession>("/api/auth/session", { bearerToken: unlockToken });
   if (!authSession.authenticated) {
-    return { authSession, data: emptyData };
+    return { authSession, data: emptyData, operatorTenants: [] };
+  }
+
+  if (authSession.sharedRuntime) {
+    const operatorTenants = await apiGet<OperatorTenant[]>("/api/operator/tenants");
+    return { authSession, data: emptyData, operatorTenants };
   }
 
   const catalogRequest =
@@ -157,6 +167,7 @@ export async function loadRuntimeData(
       runs: runPage.items,
       runsNextCursor: runPage.nextCursor,
     },
+    operatorTenants: [],
   };
 }
 
@@ -165,9 +176,11 @@ export function App(): ReactNode {
   // Keep the existing automatic theme application without exposing theme controls in the UI.
   useThemeMode();
   const [data, setData] = useState<AppData>(emptyData);
+  const [operatorTenants, setOperatorTenants] = useState<OperatorTenant[]>([]);
   const [authSession, setAuthSession] = useState<AuthSession>({
     adminAuthConfigured: false,
     authenticated: true,
+    sharedRuntime: false,
   });
   const pendingUnlockToken = useRef("");
   // Catalog is immutable while the server runs, so it is fetched once and
@@ -192,7 +205,7 @@ export function App(): ReactNode {
     const requestUnlockToken = pendingUnlockToken.current;
     setLoading(true);
     loadRuntimeData(requestUnlockToken, cachedProviders.current)
-      .then(({ authSession: session, data: nextData }) => {
+      .then(({ authSession: session, data: nextData, operatorTenants: nextOperatorTenants }) => {
         if (!cancelled) {
           cachedProviders.current = session.authenticated ? nextData.providers : undefined;
           const nextAuth = nextAuthLoadState(
@@ -205,6 +218,7 @@ export function App(): ReactNode {
           );
           pendingUnlockToken.current = nextAuth.pendingUnlockToken;
           setData(nextData);
+          setOperatorTenants(nextOperatorTenants);
           setAuthSession(nextAuth.authSession);
           setLocked(nextAuth.locked);
           setError(session.authenticated ? null : requestUnlockToken.trim() ? t("shell.invalidUnlockToken") : null);
@@ -218,7 +232,7 @@ export function App(): ReactNode {
           pendingUnlockToken.current = "";
           cachedProviders.current = undefined;
           setData(emptyData);
-          setAuthSession({ adminAuthConfigured: true, authenticated: false });
+          setAuthSession({ adminAuthConfigured: true, authenticated: false, sharedRuntime: false });
           setLocked(true);
           setError(requestUnlockToken.trim() ? t("shell.invalidUnlockToken") : null);
           return;
@@ -268,7 +282,16 @@ export function App(): ReactNode {
     return <InitialLoadingView />;
   }
 
-  return <AppShell data={data} loading={loading} error={error} onRefresh={refresh} onLogout={logout} />;
+  return (
+    <AppShell
+      data={data}
+      operatorTenants={authSession.sharedRuntime ? operatorTenants : undefined}
+      loading={loading}
+      error={error}
+      onRefresh={refresh}
+      onLogout={logout}
+    />
+  );
 }
 
 function InitialLoadingView(): ReactNode {
@@ -286,6 +309,7 @@ function InitialLoadingView(): ReactNode {
 
 function AppShell(props: {
   data: AppData;
+  operatorTenants?: OperatorTenant[];
   loading: boolean;
   error: string | null;
   onRefresh(): void;
@@ -298,6 +322,10 @@ function AppShell(props: {
   const isOverviewPage = heading === "overview";
   const isBrowserPage = section === "actions" || section === "runs";
   const isRunsPage = section === "runs";
+  const operatorMode = props.operatorTenants !== undefined;
+  const visibleNavItems = operatorMode
+    ? [{ path: "/overview", labelKey: "operator.title", icon: Building2 }]
+    : navItems;
   const mainClassName = [
     isBrowserPage ? "main main-browser" : "main",
     isOverviewPage ? "overview-main" : "",
@@ -322,7 +350,7 @@ function AppShell(props: {
               <span>Setup</span>
             </div>
             <div className="nav-group-links">
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const Icon = item.icon;
                 return (
                   <NavLink
@@ -362,7 +390,7 @@ function AppShell(props: {
       <div className={isBrowserPage ? "main-region main-region-browser" : "main-region"}>
         <header className="shell-header">
           <div className="shell-header-title">
-            <h1>Setup Agent</h1>
+            <h1>{operatorMode ? t("operator.shellTitle") : "Setup Agent"}</h1>
           </div>
           {props.loading ? (
             <div className="loading-panel page-loading">
@@ -377,38 +405,58 @@ function AppShell(props: {
 
           <Routes>
             <Route index element={<Navigate to="/overview" replace />} />
-            <Route path="/overview" element={<OverviewPage data={props.data} onRefresh={props.onRefresh} />} />
-            <Route path="/providers" element={<ProvidersPage data={props.data} onRefresh={props.onRefresh} />} />
             <Route
-              path="/providers/:service"
-              element={<ProvidersPage data={props.data} onRefresh={props.onRefresh} />}
-            />
-            <Route path="/oauth-apps" element={<OAuthAppsPage data={props.data} onRefresh={props.onRefresh} />} />
-            <Route path="/actions" element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />} />
-            <Route path="/actions/:actionId" element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />} />
-            <Route
-              path="/runs"
+              path="/overview"
               element={
-                <RunsPage
-                  initialRuns={props.data.runs}
-                  nextCursor={props.data.runsNextCursor}
-                  onRefresh={props.onRefresh}
-                />
+                operatorMode ? (
+                  <OperatorPage
+                    tenants={props.operatorTenants ?? []}
+                    loading={props.loading}
+                    onRefresh={props.onRefresh}
+                  />
+                ) : (
+                  <OverviewPage data={props.data} onRefresh={props.onRefresh} />
+                )
               }
             />
-            <Route
-              path="/access"
-              element={
-                <AccessPage
-                  providers={props.data.providers}
-                  connections={props.data.connections}
-                  tokens={props.data.runtimeTokens}
-                  policy={props.data.runtimePolicy ?? emptyData.runtimePolicy!}
-                  onRefresh={props.onRefresh}
+            {operatorMode ? null : (
+              <>
+                <Route path="/providers" element={<ProvidersPage data={props.data} onRefresh={props.onRefresh} />} />
+                <Route
+                  path="/providers/:service"
+                  element={<ProvidersPage data={props.data} onRefresh={props.onRefresh} />}
                 />
-              }
-            />
-            <Route path="/resources" element={<ResourcesPage />} />
+                <Route path="/oauth-apps" element={<OAuthAppsPage data={props.data} onRefresh={props.onRefresh} />} />
+                <Route path="/actions" element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />} />
+                <Route
+                  path="/actions/:actionId"
+                  element={<ActionsPage data={props.data} onRefresh={props.onRefresh} />}
+                />
+                <Route
+                  path="/runs"
+                  element={
+                    <RunsPage
+                      initialRuns={props.data.runs}
+                      nextCursor={props.data.runsNextCursor}
+                      onRefresh={props.onRefresh}
+                    />
+                  }
+                />
+                <Route
+                  path="/access"
+                  element={
+                    <AccessPage
+                      providers={props.data.providers}
+                      connections={props.data.connections}
+                      tokens={props.data.runtimeTokens}
+                      policy={props.data.runtimePolicy ?? emptyData.runtimePolicy!}
+                      onRefresh={props.onRefresh}
+                    />
+                  }
+                />
+                <Route path="/resources" element={<ResourcesPage />} />
+              </>
+            )}
             <Route path="*" element={<Navigate to="/overview" replace />} />
           </Routes>
         </main>

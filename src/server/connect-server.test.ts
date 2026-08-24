@@ -1382,6 +1382,7 @@ describe("ConnectServer", () => {
     await expect(unauthenticated.json()).resolves.toEqual({
       adminAuthConfigured: true,
       authenticated: false,
+      sharedRuntime: false,
     });
 
     const bearer = await app.request("/api/auth/session", {
@@ -1393,6 +1394,7 @@ describe("ConnectServer", () => {
     await expect(bearer.json()).resolves.toEqual({
       adminAuthConfigured: true,
       authenticated: true,
+      sharedRuntime: false,
     });
 
     const lowercaseBearer = await app.request("/api/auth/session", {
@@ -1404,6 +1406,7 @@ describe("ConnectServer", () => {
     await expect(lowercaseBearer.json()).resolves.toEqual({
       adminAuthConfigured: true,
       authenticated: true,
+      sharedRuntime: false,
     });
 
     const authorized = await app.request("/api/providers", {
@@ -1417,6 +1420,7 @@ describe("ConnectServer", () => {
     await expect(cookieSession.json()).resolves.toEqual({
       adminAuthConfigured: true,
       authenticated: true,
+      sharedRuntime: false,
     });
   });
 
@@ -1440,6 +1444,7 @@ describe("ConnectServer", () => {
     await expect(expiredSession.json()).resolves.toEqual({
       adminAuthConfigured: true,
       authenticated: false,
+      sharedRuntime: false,
     });
   });
 
@@ -1451,6 +1456,7 @@ describe("ConnectServer", () => {
     await expect(response.json()).resolves.toEqual({
       adminAuthConfigured: false,
       authenticated: true,
+      sharedRuntime: false,
     });
   });
   it("does not accept the admin token for stored runtime token access", async () => {
