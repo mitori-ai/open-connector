@@ -72,11 +72,11 @@ docker run -d \
 `migrate` 命令。Migration 应使用即将部署的同一个镜像标签：
 
 ```bash
-OPEN_CONNECTOR_VERSION="<release-version>"
+OOMOL_CONNECT_VERSION="<release-version>"
 
 docker run --rm \
   -e OOMOL_CONNECT_DATABASE_URL="postgresql://migration_user:password@db.example.com:5432/open_connector?sslmode=verify-full" \
-  "ghcr.io/oomol-lab/open-connector:${OPEN_CONNECTOR_VERSION}" \
+  "ghcr.io/oomol-lab/open-connector:${OOMOL_CONNECT_VERSION}" \
   migrate
 ```
 

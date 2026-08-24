@@ -77,11 +77,11 @@ before starting a newer image that contains pending migrations. Use the same ima
 will deploy:
 
 ```bash
-OPEN_CONNECTOR_VERSION="<release-version>"
+OOMOL_CONNECT_VERSION="<release-version>"
 
 docker run --rm \
   -e OOMOL_CONNECT_DATABASE_URL="postgresql://migration_user:password@db.example.com:5432/open_connector?sslmode=verify-full" \
-  "ghcr.io/oomol-lab/open-connector:${OPEN_CONNECTOR_VERSION}" \
+  "ghcr.io/oomol-lab/open-connector:${OOMOL_CONNECT_VERSION}" \
   migrate
 ```
 
