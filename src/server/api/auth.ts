@@ -135,7 +135,12 @@ function isPublicPath(path: string, method: string): boolean {
 export async function readLocalAuthSession(context: Context, options: LocalAuthOptions): Promise<LocalAuthSession> {
   const adminToken = normalizeToken(options.adminToken);
   if (!adminToken) {
-    return { adminAuthConfigured: false, authenticated: true, sharedRuntime: Boolean(options.sharedRuntime) };
+    return {
+      adminAuthConfigured: false,
+      authenticated: true,
+      sharedRuntime: Boolean(options.sharedRuntime),
+      tenantId: await readOperatorTenantSession(context, options),
+    };
   }
 
   const authenticated = await hasRequestToken(context, adminToken);

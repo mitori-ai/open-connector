@@ -224,6 +224,15 @@ describe("shared runtime tenant isolation", () => {
     });
     const openTenantCookie = openSelection.headers.get("set-cookie")?.split(";")[0] ?? "";
     expect(openSelection.status).toBe(200);
+    const openSession = await openOperatorApp.request("/api/auth/session", {
+      headers: { cookie: openTenantCookie },
+    });
+    await expect(openSession.json()).resolves.toEqual({
+      adminAuthConfigured: false,
+      authenticated: true,
+      sharedRuntime: true,
+      tenantId: tenantA,
+    });
     expect(
       (await openOperatorApp.request("/api/tenant/context", { headers: { cookie: openTenantCookie } })).status,
     ).toBe(200);

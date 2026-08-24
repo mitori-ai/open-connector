@@ -96,6 +96,11 @@
   },
   "operator": {
     "shellTitle": "运营管理",
+    "workspaceTitle": "共享运行时",
+    "operatorView": "运营视图",
+    "tenantView": "租户视图",
+    "operatorNav": "运营管理",
+    "tenantNav": "租户工作区",
     "title": "租户",
     "subtitle": "选择租户以管理其连接、操作、运行记录和 API 密钥。",
     "name": "名称",

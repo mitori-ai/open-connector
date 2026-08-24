@@ -96,6 +96,11 @@
   },
   "operator": {
     "shellTitle": "Opérateur",
+    "workspaceTitle": "Runtime partagé",
+    "operatorView": "Vue opérateur",
+    "tenantView": "Vue locataire",
+    "operatorNav": "Opérateur",
+    "tenantNav": "Espace locataire",
     "title": "Locataires",
     "subtitle": "Sélectionnez un locataire pour gérer ses connexions, actions, exécutions et clés API.",
     "name": "Nom",

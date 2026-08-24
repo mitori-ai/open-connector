@@ -96,6 +96,11 @@
   },
   "operator": {
     "shellTitle": "オペレーター",
+    "workspaceTitle": "共有ランタイム",
+    "operatorView": "オペレータービュー",
+    "tenantView": "テナントビュー",
+    "operatorNav": "オペレーター",
+    "tenantNav": "テナントワークスペース",
     "title": "テナント",
     "subtitle": "テナントを選択して、接続、アクション、実行履歴、API キーを管理します。",
     "name": "名前",

@@ -96,6 +96,11 @@
   },
   "operator": {
     "shellTitle": "營運管理",
+    "workspaceTitle": "共享執行階段",
+    "operatorView": "營運檢視",
+    "tenantView": "租戶檢視",
+    "operatorNav": "營運管理",
+    "tenantNav": "租戶工作區",
     "title": "租戶",
     "subtitle": "選擇租戶以管理其連線、動作、執行記錄和 API 金鑰。",
     "name": "名稱",

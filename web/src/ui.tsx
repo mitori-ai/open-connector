@@ -509,12 +509,17 @@ function AppShell(props: {
     .filter(Boolean)
     .join(" ");
   return (
-    <div className="app-shell">
+    <div className={sharedRuntime ? "app-shell shared-runtime-shell" : "app-shell"}>
       <aside className="sidebar">
         <div className="brand">
           <img className="brand-mark" src={mitoriMarkUrl} alt="" />
           <div>
             <div className="brand-name">Mitori</div>
+            {sharedRuntime ? (
+              <div className="brand-subtitle">
+                {operatorMode ? t("operator.workspaceTitle") : props.activeTenant?.displayName}
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -522,7 +527,7 @@ function AppShell(props: {
           <div className="nav-group">
             <div className="nav-group-label">
               <span className="nav-group-dot" aria-hidden="true" />
-              <span>Setup</span>
+              <span>{operatorMode ? t("operator.operatorNav") : tenantMode ? t("operator.tenantNav") : "Setup"}</span>
             </div>
             <div className="nav-group-links">
               {visibleNavItems.map((item) => {
@@ -565,7 +570,19 @@ function AppShell(props: {
       <div className={isBrowserPage ? "main-region main-region-browser" : "main-region"}>
         <header className="shell-header">
           <div className="shell-header-title">
-            <h1>{operatorMode ? t("operator.shellTitle") : (props.activeTenant?.displayName ?? "Setup Agent")}</h1>
+            <h1>
+              {operatorMode
+                ? t("operator.workspaceTitle")
+                : tenantMode
+                  ? props.activeTenant?.displayName
+                  : "Setup Agent"}
+            </h1>
+            {sharedRuntime ? (
+              <span className="shell-context-badge">
+                <span aria-hidden="true" />
+                {operatorMode ? t("operator.operatorView") : t("operator.tenantView")}
+              </span>
+            ) : null}
           </div>
           {tenantMode ? (
             <Button className="cc-button" variant="outline" size="sm" onClick={props.onExitTenant}>

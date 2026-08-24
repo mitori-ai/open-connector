@@ -96,6 +96,11 @@
   },
   "operator": {
     "shellTitle": "Operator",
+    "workspaceTitle": "Shared runtime",
+    "operatorView": "Operator view",
+    "tenantView": "Tenant view",
+    "operatorNav": "Operator",
+    "tenantNav": "Tenant workspace",
     "title": "Tenants",
     "subtitle": "Select a tenant to manage its connections, actions, runs, and API keys.",
     "name": "Name",

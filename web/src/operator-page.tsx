@@ -33,7 +33,7 @@ export function OperatorPage(props: {
             icon={<Building2 />}
           />
         ) : (
-          <Table>
+          <Table className="operator-table">
             <TableHeader>
               <TableRow>
                 <TableHead>{t("operator.name")}</TableHead>
