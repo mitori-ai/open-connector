@@ -34,6 +34,10 @@ interface SmartsuiteRequestInput {
   allowEmpty?: boolean;
 }
 
+type SmartsuiteRequest = (
+  options: Omit<SmartsuiteRequestInput, "apiKey" | "workspaceId" | "fetcher" | "phase">,
+) => Promise<unknown>;
+
 export async function validateSmartsuiteCredential(
   input: Record<string, string>,
   fetcher: typeof fetch,
@@ -82,6 +86,7 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
     case "list_records":
     case "search_records": {
       const tableId = readRequiredString(input.input.tableId, "tableId");
+      const hydrated = optionalBoolean(input.input.hydrated);
       const payload = optionalRecord(
         await request({
           path: `/applications/${encodeURIComponent(tableId)}/records/list/`,
@@ -94,7 +99,7 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
             ),
           }),
           body: jsonObject({
-            hydrated: optionalBoolean(input.input.hydrated),
+            hydrated,
             sort: input.input.sort,
             filter: input.input.filter,
           }),
@@ -103,11 +108,15 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
       if (!payload || !Array.isArray(payload.items)) {
         throw invalidPayload("record list response did not include items");
       }
+      const records =
+        hydrated === true && payload.items.length > 0
+          ? await hydrateAssignedToRecords(payload.items, request)
+          : payload.items;
       return {
         total: readRequiredInteger(payload.total, "total"),
         offset: readRequiredInteger(payload.offset, "offset"),
         limit: readRequiredInteger(payload.limit, "limit"),
-        records: payload.items,
+        records,
       };
     }
     case "get_record": {
@@ -160,6 +169,106 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
       return { deleted: true };
     }
   }
+}
+
+async function hydrateAssignedToRecords(records: unknown[], request: SmartsuiteRequest): Promise<unknown[]> {
+  const assignedIds = new Set<string>();
+  for (const record of records) {
+    const object = optionalRecord(record);
+    if (!object) continue;
+    for (const key of ["assigned_to", "Assigned To"]) {
+      collectUnlabelledMemberIds(object[key], assignedIds);
+    }
+  }
+  if (assignedIds.size === 0) return records;
+
+  const payload = optionalRecord(
+    await request({
+      path: "/members/list/",
+      method: "POST",
+      query: { offset: "0", limit: "1000" },
+      body: { sort: [], filter: {} },
+    }),
+  );
+  if (!payload || !Array.isArray(payload.items)) {
+    throw invalidPayload("member list response did not include items");
+  }
+
+  const labels = new Map<string, string>();
+  for (const member of payload.items) {
+    const object = optionalRecord(member);
+    const id = readMemberId(object);
+    const displayName = readMemberDisplayName(object);
+    if (id && displayName) labels.set(id, displayName);
+  }
+
+  return records.map((record) => {
+    const object = optionalRecord(record);
+    if (!object) return record;
+    const output = { ...object };
+    let changed = false;
+    for (const key of ["assigned_to", "Assigned To"]) {
+      if (!(key in object)) continue;
+      const hydrated = hydrateMemberValue(object[key], labels);
+      if (hydrated !== object[key]) {
+        output[key] = hydrated;
+        changed = true;
+      }
+    }
+    return changed ? output : record;
+  });
+}
+
+function collectUnlabelledMemberIds(value: unknown, ids: Set<string>): void {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectUnlabelledMemberIds(item, ids));
+    return;
+  }
+  if (typeof value === "string" && value.trim()) {
+    ids.add(value.trim());
+    return;
+  }
+  const object = optionalRecord(value);
+  if (!object) return;
+  const id = readMemberId(object);
+  if (id && !readMemberDisplayName(object)) ids.add(id);
+}
+
+function hydrateMemberValue(value: unknown, labels: Map<string, string>): unknown {
+  if (Array.isArray(value)) {
+    const hydrated = value.map((item) => hydrateMemberValue(item, labels));
+    return hydrated.every((item, index) => item === value[index]) ? value : hydrated;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const id = value.trim();
+    const displayName = labels.get(id);
+    return displayName ? { id, displayName } : value;
+  }
+  const object = optionalRecord(value);
+  if (!object) return value;
+  const id = readMemberId(object);
+  if (!id || readMemberDisplayName(object)) return value;
+  const displayName = labels.get(id);
+  return displayName ? { ...object, displayName } : value;
+}
+
+function readMemberId(value: Record<string, unknown> | undefined): string | undefined {
+  if (!value) return undefined;
+  return optionalString(value.id) ?? optionalString(value.user_id) ?? optionalString(value.userId);
+}
+
+function readMemberDisplayName(value: Record<string, unknown> | undefined): string | undefined {
+  if (!value) return undefined;
+  const fullName = optionalRecord(value.full_name);
+  const nameParts = [optionalString(fullName?.first_name), optionalString(fullName?.last_name)].filter(Boolean);
+  return (
+    optionalString(value.displayName) ??
+    optionalString(value.display_name) ??
+    optionalString(value.name) ??
+    optionalString(value.label) ??
+    optionalString(fullName?.sys_root) ??
+    (nameParts.length > 0 ? nameParts.join(" ") : undefined)
+  );
 }
 
 async function requestSmartsuite(input: SmartsuiteRequestInput) {

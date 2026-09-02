@@ -38,6 +38,63 @@ describe("SmartSuite compatibility runtime", () => {
     expect(JSON.parse(String(init?.body))).toMatchObject({ filter: { operator: "and", fields: [] } });
   });
 
+  it("hydrates ID-only Assigned To values from the workspace member list", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () =>
+        Response.json({
+          items: [
+            { id: "record-1", assigned_to: ["member-jin"] },
+            { id: "record-2", assigned_to: ["member-unknown"] },
+          ],
+          total: 2,
+          offset: 0,
+          limit: 100,
+        }),
+      )
+      .mockImplementationOnce(async () =>
+        Response.json({
+          items: [
+            {
+              id: "member-jin",
+              full_name: { first_name: "Jin", last_name: "Kuk", sys_root: "Jin Kuk" },
+              email: ["jin@mitori.ai"],
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 1000,
+        }),
+      );
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId },
+          actionName: "list_records",
+          input: { tableId: "table-1", hydrated: true },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({
+      records: [
+        { id: "record-1", assigned_to: [{ id: "member-jin", displayName: "Jin Kuk" }] },
+        { id: "record-2", assigned_to: ["member-unknown"] },
+      ],
+      total: 2,
+      offset: 0,
+      limit: 100,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [memberRequest, memberInit] = fetchMock.mock.calls[1]!;
+    expect(new URL(String(memberRequest)).toString()).toBe(
+      "https://app.smartsuite.com/api/v1/members/list/?offset=0&limit=1000",
+    );
+    expect(JSON.parse(String(memberInit?.body))).toEqual({ sort: [], filter: {} });
+  });
+
   it("redacts API keys and workspace IDs from provider and transport errors", async () => {
     const providerFetcher = vi.fn(async () =>
       Response.json({ message: `echoed ${apiKey} and ${workspaceId}` }, { status: 400 }),
