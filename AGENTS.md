@@ -66,3 +66,8 @@
 - Run `npm run build` only when you need a separate no-fix typecheck, for example after generated files changed or for CI parity.
 - Run `npm run generate:catalog` when provider definitions or actions change.
 - Run provider examples manually when the task changes user-facing example behavior.
+
+## Pull Requests
+
+- Treat `mitori-ai/open-connector` as the maintained fork and open routine repository pull requests against its `main` branch unless the user explicitly requests an upstream contribution.
+- Push task branches to `origin`, then create fork-local pull requests explicitly with `--repo mitori-ai/open-connector --base main`. Do not use OpenClaw's generic GitHub publisher for fork-local pull requests because it resolves the GitHub parent repository (`oomol-lab/open-connector`) as the target.
