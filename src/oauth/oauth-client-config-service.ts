@@ -177,6 +177,22 @@ export class OAuthClientConfigService {
     return filterDeclaredScopes(config.requestedScopes, auth.scopes) ?? [...auth.scopes];
   }
 
+  /**
+   * Pin one authorization to a declared subset without mutating the shared
+   * provider OAuth configuration used by other connections.
+   */
+  withRequestedScopes(
+    service: string,
+    config: OAuthClientConfig,
+    requestedScopes: string[],
+  ): OAuthClientConfig {
+    const auth = this.getOAuthDefinition(service);
+    return {
+      ...config,
+      requestedScopes: normalizeRequestedScopes(service, requestedScopes, auth.scopes),
+    };
+  }
+
   private listOAuthProviders(): Array<{ service: string; auth: OAuth2AuthDefinition }> {
     return this.catalog.providers.flatMap((provider) => {
       const auth = provider.auth.find((auth) => auth.type === "oauth2");

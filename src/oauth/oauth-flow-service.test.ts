@@ -222,6 +222,31 @@ describe("OAuthFlowService", () => {
     });
     expect(new URL(started.authorizationUrl).searchParams.get("scope")).toBe("read");
   });
+
+  it("pins a requested scope subset to one authorization without changing the shared config", async () => {
+    const services = createServices([oauthProvider]);
+    await services.clientConfigs.upsertConfig({
+      service: "example",
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      extra: { tenant: "default" },
+    });
+
+    const started = await services.flow.startAuthorization({
+      service: "example",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "test-session-correlation",
+      requestedScopes: ["read"],
+    });
+
+    expect(new URL(started.authorizationUrl).searchParams.get("scope")).toBe("read");
+    expect(await services.states.take(started.state)).toMatchObject({
+      clientConfig: { requestedScopes: ["read"] },
+    });
+    await expect(services.clientConfigs.getConfig("example")).resolves.toMatchObject({
+      requestedScopes: undefined,
+    });
+  });
   it("requires OAuth client config before authorization", async () => {
     const services = createServices([oauthProvider]);
     await expect(

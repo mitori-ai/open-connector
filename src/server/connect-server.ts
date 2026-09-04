@@ -992,6 +992,7 @@ export class ConnectServer {
         sessionCorrelation: sessionCorrelation ?? crypto.randomUUID(),
         returnUrl,
         clientConfig: readOAuthClientConfigInput(body),
+        requestedScopes: readRequestedScopes(body),
       });
       const authorizationUrl = new URL(authorization.authorizationUrl);
       this.options.logger?.info(
@@ -1395,7 +1396,7 @@ async function hasRequestBody(context: Context): Promise<boolean> {
 }
 
 function readOAuthClientConfigInput(body: Record<string, unknown>): OAuthClientConfigInput | undefined {
-  const keys = ["clientId", "clientSecret", "requestedScopes", "extra", "secretExtra"];
+  const keys = ["clientId", "clientSecret", "extra", "secretExtra"];
   if (!keys.some((key) => key in body)) {
     return undefined;
   }

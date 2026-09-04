@@ -12,4 +12,11 @@ export const gmailSendScopes: string[] = [gmailSendScope];
 export const gmailLabelScopes: string[] = [gmailLabelsScope];
 export const gmailSettingsBasicScopes: string[] = [gmailSettingsBasicScope];
 
-export const gmailOAuthScopes: string[] = [gmailModifyScope, gmailLabelsScope, gmailSettingsBasicScope];
+// Declares every user-authorizable Gmail scope used by this provider. Specific
+// connections may request a narrower declared subset.
+export const gmailOAuthScopes: string[] = [
+  gmailReadonlyScope,
+  gmailModifyScope,
+  gmailLabelsScope,
+  gmailSettingsBasicScope,
+];
