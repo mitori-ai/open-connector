@@ -229,14 +229,12 @@ export function readOAuthClientConfigMetadata(
  */
 export class OAuthClientConfigError extends Error {
   readonly code: string;
+  readonly field?: "clientId" | "clientSecret" | "requestedScopes";
 
-  constructor(
-    code: string,
-    message: string,
-    readonly field?: "clientId" | "clientSecret" | "requestedScopes",
-  ) {
+  constructor(code: string, message: string, field?: "clientId" | "clientSecret" | "requestedScopes") {
     super(message);
     this.code = code;
+    this.field = field;
   }
 }
 

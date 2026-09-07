@@ -226,6 +226,28 @@ describe("OAuthFlowService", () => {
       clientConfig: { clientId: "saved-id", requestedScopes: ["read"] },
     });
     expect((await services.clientConfigs.getConfig("example"))?.requestedScopes).toBeUndefined();
+    await services.clientConfigs.upsertConfig({
+      service: "example",
+      clientId: "saved-id",
+      clientSecret: "saved-secret",
+      extra: { tenant: "default" },
+      requestedScopes: ["read"],
+    });
+    await expect(services.flow.startAuthorization({ ...input, requestedScopes: ["write"] })).rejects.toMatchObject({
+      code: "invalid_input",
+      field: "requestedScopes",
+    });
+    await services.clientConfigs.deleteConfig("example");
+    await expect(services.flow.startAuthorization({ ...input, requestedScopes: ["read"] })).rejects.toMatchObject({
+      code: "oauth_client_config_required",
+    });
+    await services.clientConfigs.upsertConfig({
+      service: "example",
+      clientId: "saved-id",
+      clientSecret: "saved-secret",
+      extra: { tenant: "default" },
+    });
+
     for (const requestedScopes of [[], ["unknown"], [""]]) {
       await expect(services.flow.startAuthorization({ ...input, requestedScopes })).rejects.toMatchObject({
         code: "invalid_input",

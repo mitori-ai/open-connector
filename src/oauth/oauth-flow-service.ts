@@ -10,6 +10,7 @@ import type {
 import { createHash, randomBytes } from "node:crypto";
 import { defaultConnectionName } from "../connection-service.ts";
 import { normalizeSlackAuthorizationCredential } from "../providers/slack/oauth.ts";
+import { OAuthClientConfigError } from "./oauth-client-config-service.ts";
 import { requestAuthorizationCodeToken } from "./oauth-token.ts";
 
 /**
@@ -109,6 +110,19 @@ export class OAuthFlowService {
     }
 
     if (input.requestedScopes !== undefined) {
+      const savedScopes = config.requestedScopes;
+      // A saved app's explicit scope policy is a ceiling, not a mutable default.
+      if (
+        !input.clientConfig &&
+        savedScopes &&
+        input.requestedScopes.some((scope) => !savedScopes.includes(scope.trim()))
+      ) {
+        throw new OAuthClientConfigError(
+          "invalid_input",
+          "requestedScopes exceeds the saved app scope policy.",
+          "requestedScopes",
+        );
+      }
       config = this.clientConfigs.normalizeConfig(service, { ...config, requestedScopes: input.requestedScopes });
     }
 
