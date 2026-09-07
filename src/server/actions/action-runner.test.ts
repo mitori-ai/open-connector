@@ -365,7 +365,7 @@ describe("ActionRunner", () => {
       }),
       tenantId: compatibilityTenantId,
     });
-    const unrestricted = await runner.run({
+    const emptyGrant = await runner.run({
       actionId: "example.echo",
       input: {},
       caller: "mcp",
@@ -392,9 +392,9 @@ describe("ActionRunner", () => {
       tenantId: compatibilityTenantId,
     });
     expect(allowed?.result).toMatchObject({ ok: true });
-    expect(unrestricted?.result).toMatchObject({ ok: true });
+    expect(emptyGrant?.result).toMatchObject({ ok: false, error: { code: "connection_not_allowed" } });
     expect(denied?.result).toMatchObject({ ok: false, error: { code: "connection_not_allowed" } });
-    expect(resolveConnection).toHaveBeenCalledTimes(2);
+    expect(resolveConnection).toHaveBeenCalledTimes(1);
   });
 });
 
