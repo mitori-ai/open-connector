@@ -240,14 +240,14 @@ curl -s -X POST "http://localhost:3000/v1/actions/github.get_current_user?alias=
 ```
 
 Persistent runtime tokens may further restrict this selection with `allowedConnections`. An omitted
-or empty list leaves every stored connection available. Entries are the stable, opaque IDs returned
+or empty list denies every stored connection. Entries are the stable, opaque IDs returned
 when connections are created or listed. The alias above selects the `work` connection, whose `id`
 must be granted; an unnamed request selects the default connection and requires its ID. Other
 connections return `403 connection_not_allowed` before the credential is loaded. Virtual `no_auth`
 connections do not require a grant.
 
 Example: keep a shared default GitHub connection and a `work` connection, then issue one
-unrestricted token and one work-only token:
+empty token and one work-only token:
 
 ```bash
 curl -s -X PUT http://localhost:3000/api/connections/github \
@@ -333,7 +333,7 @@ selected runtime database.
 Runtime clients should send `Authorization: Bearer oct_...`. Persistent tokens configure Action
 rules, provider proxy grants, and optional connection grants independently. Their `allowedProxies`
 list is empty by default, which denies `/v1/proxy/:service`; add a provider service or `*` only when
-that client needs proxy access. Omit `allowedConnections` or send `[]` on create for unrestricted
+that client needs proxy access. Omit `allowedConnections` or send `[]` on create to deny all stored
 connection access. Updates must send the field so a PUT cannot drop an existing restriction. A
 non-empty list is an exact allowlist of stable, opaque IDs returned by the connection APIs; unnamed
 requests select the provider's default connection and are denied unless its ID is listed. Virtual

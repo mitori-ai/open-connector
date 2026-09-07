@@ -264,7 +264,7 @@ describe("action execution OpenAPI", () => {
     expect(createRequest.properties.allowedConnections).toMatchObject(expectedGrant);
     expect(tokenPolicy.properties.allowedConnections).toMatchObject(expectedGrant);
     expect(tokenSummary.properties.allowedConnections.description).toMatch(/empty list/i);
-    expect(tokenSummary.properties.allowedConnections.description).toMatch(/unrestricted/i);
+    expect(tokenSummary.properties.allowedConnections.description).toMatch(/denies access/i);
     expect(createRequest.properties.allowedConnections.description).toMatch(/omit/i);
     expect(createRequest.properties.allowedConnections.description).toMatch(/exact/i);
     expect(createRequest.properties.allowedConnections.description).toMatch(/opaque IDs/i);

@@ -47,7 +47,7 @@ invalid, revoked, and disabled-tenant credentials. Non-shared runtimes retain th
 bootstrap and local-open compatibility principals.
 
 `allowedConnections` belongs only to stored tokens, not to deployment or Runtime policy. Omit the
-field on create, or send `[]`, for unrestricted connection access. Updates must send the field so a
+field on create, or send `[]`, to deny all stored connection access. Updates must send the field so a
 PUT cannot drop an existing restriction. A non-empty list grants exact stable, opaque IDs returned
 by the connection APIs. Omitting `connectionName` on HTTP, MCP, or proxy requests selects the
 target provider's default connection, whose ID must be granted. Denied requests fail before
@@ -359,3 +359,12 @@ its `executionId` as the stable run ID; `GET /api/runs/:id` returns that single 
 
 Action execution responses include `meta.executionId`, `meta.actionId`, and `meta.auditPersisted` once execution
 has started. `auditPersisted: false` means the action result is valid but its audit record could not be stored.
+
+### Versioned tenant compatibility contracts
+
+Authenticated `GET /api/tenant/context` advertises `capabilities`:
+
+- `oauth_default_app_scope_override_v1`: `requestedScopes` alone uses the saved Default App, validates a nonempty declared subset, and binds that app and subset to completion without changing saved defaults. Custom client fields still require custom-app permission.
+- `runtime_token_explicit_empty_connections_deny_v1`: an explicit empty connection grant denies all stored credential connections on action and proxy paths. Stored-token creation already defaults omitted grants to `[]`; existing empty stored tokens must receive reviewed explicit IDs before credential-backed use. No-token deployment/bootstrap behavior and virtual `no_auth` actions are unchanged.
+
+Clients relying on these semantics must check the capability before mutating policy or starting scope-only OAuth. Older producers do not advertise them. This is a deliberate fail-closed change from older stored-token empty-list semantics; no migration infers grants.

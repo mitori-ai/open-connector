@@ -1015,6 +1015,7 @@ export class ConnectServer {
         sessionCorrelation: sessionCorrelation ?? crypto.randomUUID(),
         returnUrl,
         clientConfig: readOAuthClientConfigInput(body),
+        requestedScopes: readRequestedScopes(body),
       });
       const authorizationUrl = new URL(authorization.authorizationUrl);
       this.options.logger?.info(
@@ -1036,7 +1037,16 @@ export class ConnectServer {
           { errorCode: error.code, path: context.req.path, service: requestedService, connectionName },
           "oauth authorization failed",
         );
-        return jsonError(context, error.code === "unknown_service" ? 404 : 400, error.code, error.message);
+        return context.json(
+          {
+            error: {
+              code: error.code,
+              message: error.message,
+              field: error instanceof OAuthClientConfigError ? error.field : undefined,
+            },
+          },
+          error.code === "unknown_service" ? 404 : 400,
+        );
       }
       throw error;
     }
@@ -1298,7 +1308,11 @@ export class ConnectServer {
     if (principal?.kind !== "tenant" || principal.capability !== "tenant-admin") {
       return context.json({ error: { code: "forbidden", message: "A tenant-admin credential is required." } }, 403);
     }
-    return context.json({ tenantId: principal.tenantId, capability: principal.capability });
+    return context.json({
+      tenantId: principal.tenantId,
+      capability: principal.capability,
+      capabilities: ["oauth_default_app_scope_override_v1", "runtime_token_explicit_empty_connections_deny_v1"],
+    });
   }
 
   private async getRuntimePrincipal(context: Context): Promise<Response> {
@@ -1463,7 +1477,7 @@ async function hasRequestBody(context: Context): Promise<boolean> {
 }
 
 function readOAuthClientConfigInput(body: Record<string, unknown>): OAuthClientConfigInput | undefined {
-  const keys = ["clientId", "clientSecret", "requestedScopes", "extra", "secretExtra"];
+  const keys = ["clientId", "clientSecret", "extra", "secretExtra"];
   if (!keys.some((key) => key in body)) {
     return undefined;
   }

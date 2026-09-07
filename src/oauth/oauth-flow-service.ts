@@ -28,6 +28,8 @@ export interface OAuthAuthorizationStartInput {
   sessionCorrelation: string;
   returnUrl?: string;
   clientConfig?: OAuthClientConfigInput;
+  /** Per-authorization declared scopes; does not select a custom OAuth app. */
+  requestedScopes?: string[];
 }
 
 export interface OAuthAuthorizationCompleteInput {
@@ -99,11 +101,15 @@ export class OAuthFlowService {
     const connectionName = input.connectionName ?? defaultConnectionName;
     this.connections.assertProviderAvailable(service);
     const auth = this.clientConfigs.getOAuthDefinition(service);
-    const config = input.clientConfig
+    let config = input.clientConfig
       ? this.resolveCustomClientConfig(service, input.clientConfig)
       : await this.clientConfigs.getConfig(service);
     if (!config) {
       throw new OAuthFlowError("oauth_client_config_required", `Configure an OAuth client for ${service} first.`);
+    }
+
+    if (input.requestedScopes !== undefined) {
+      config = this.clientConfigs.normalizeConfig(service, { ...config, requestedScopes: input.requestedScopes });
     }
 
     const state = crypto.randomUUID();
@@ -116,7 +122,7 @@ export class OAuthFlowService {
       createdAt: new Date().toISOString(),
       sessionCorrelation: input.sessionCorrelation,
       pkceCodeVerifier,
-      clientConfig: input.clientConfig ? config : undefined,
+      clientConfig: input.clientConfig || input.requestedScopes !== undefined ? config : undefined,
       returnUrl,
     });
 

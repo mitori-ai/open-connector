@@ -170,6 +170,31 @@ describe("ConnectServer", () => {
     });
   });
 
+  it("accepts a scope-only request with the saved default app and rejects invalid subsets", async () => {
+    const app = createTestServer([oauthProvider]).createApp();
+    expect(
+      (
+        await app.request("/api/oauth/configs/oauth_example", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientId: "synthetic-id", clientSecret: "synthetic-secret" }),
+        })
+      ).status,
+    ).toBe(200);
+    const request = (requestedScopes: unknown) =>
+      app.request("/api/oauth/authorizations", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ service: "oauth_example", requestedScopes }),
+      });
+    const response = await request(["read"]);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(new URL(body.authorizationUrl).searchParams.get("scope")).toBe("read");
+    expect(new URL(body.authorizationUrl).searchParams.get("client_id")).toBe("synthetic-id");
+    for (const scopes of [[], ["undeclared"], "read", null]) expect((await request(scopes)).status).toBe(400);
+  });
+
   it("starts console OAuth with a connection-scoped client", async () => {
     const app = createTestServer([oauthProvider], {
       allowedCustomOAuth: ["oauth_example"],
@@ -281,6 +306,7 @@ describe("ConnectServer", () => {
       error: {
         code: "invalid_input",
         message: "clientSecret is required.",
+        field: "clientSecret",
       },
     });
   });
@@ -1911,7 +1937,7 @@ describe("ConnectServer", () => {
     expect(guide.status).toBe(200);
     expect(await guide.text()).toContain("## Current Connection");
   });
-  it("preserves admin, bootstrap, JWT, and unrestricted token connection access", async () => {
+  it("preserves no-token access while denying explicit empty stored-token connections", async () => {
     const runtimeTokens = createRuntimeTokens();
     const verifyRuntimeJwt = vi.fn(async (token: string) => token === "jwt-access-token");
     const app = createTestServer([{ ...apiKeyProvider, actions: [echoAction] }], {
@@ -1978,7 +2004,7 @@ describe("ConnectServer", () => {
     expect(await runDefault("Bearer local-token")).toBe(200);
     expect(await runDefault("Bearer bootstrap-token")).toBe(200);
     expect(await runDefault("Bearer jwt-access-token")).toBe(200);
-    expect(await runDefault(`Bearer ${unrestrictedToken.token}`)).toBe(200);
+    expect(await runDefault(`Bearer ${unrestrictedToken.token}`)).toBe(403);
   });
   it("rejects token policy updates that omit allowedConnections", async () => {
     const runtimeTokens = createRuntimeTokens();
@@ -2021,16 +2047,17 @@ describe("ConnectServer", () => {
         return { ok: true, output: input };
       }),
     }).createApp();
-    await app.request("/api/connections/example", {
+    const connected = await app.request("/api/connections/example", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ authType: "api_key", values: { apiKey: "example-key" } }),
     });
+    const connectionId = (await connected.json()).id;
     const createToken = async (name: string): Promise<string> => {
       const response = await app.request("/api/runtime-tokens", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, allowedConnections: [connectionId] }),
       });
       return (
         (await response.json()) as {
@@ -2101,15 +2128,16 @@ describe("ConnectServer", () => {
         return { ok: true, output: value };
       }),
     }).createApp();
-    await app.request("/api/connections/example", {
+    const connected = await app.request("/api/connections/example", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ authType: "api_key", values: { apiKey: "example-key" } }),
     });
+    const connectionId = (await connected.json()).id;
     const created = await app.request("/api/runtime-tokens", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "Stored token" }),
+      body: JSON.stringify({ name: "Stored token", allowedConnections: [connectionId] }),
     });
     const token = (
       (await created.json()) as {
@@ -3299,11 +3327,12 @@ describe("ConnectServer", () => {
       providerLoader: new ProxyProviderLoader(),
     }).createApp();
 
-    await app.request("/api/connections/example", {
+    const connected = await app.request("/api/connections/example", {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ authType: "api_key", values: { apiKey: "example-key" } }),
     });
+    const connectionId = (await connected.json()).id;
     const deniedCreation = await app.request("/api/runtime-tokens", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -3322,6 +3351,7 @@ describe("ConnectServer", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         name: "Example proxy",
+        allowedConnections: [connectionId],
         allowedActions: ["example.echo"],
         blockedActions: ["example.delete"],
         allowedProxies: ["example"],
@@ -3342,6 +3372,22 @@ describe("ConnectServer", () => {
 
     const granted = await app.request("/v1/proxy/example", request(grantedToken.token));
     expect(granted.status).toBe(200);
+    const record = (await runtimeTokens.listTokens(compatibilityTenantId)).find(
+      (item) => item.name === "Example proxy",
+    )!;
+    await runtimeTokens.updateTokenPolicy(
+      record.id,
+      {
+        allowedActions: ["example.echo"],
+        blockedActions: ["example.delete"],
+        allowedProxies: ["example"],
+        allowedConnections: [],
+      },
+      compatibilityTenantId,
+    );
+    const empty = await app.request("/v1/proxy/example", request(grantedToken.token));
+    expect(empty.status).toBe(403);
+    await expect(empty.json()).resolves.toMatchObject({ errorCode: "connection_not_allowed" });
   });
 
   it("rejects invalid provider proxy endpoints", async () => {

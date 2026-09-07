@@ -57,7 +57,7 @@ or PostgreSQL database, while
 Cloudflare Workers store them in D1. Persistent tokens have independent Action rules, provider
 proxy grants, and optional connection grants. A new token has no proxy access until its
 `allowedProxies` includes a provider service or `*`; those grants can only narrow the deployment
-and runtime proxy policy. `allowedConnections` is omitted or `[]` for unrestricted connection
+and runtime proxy policy. Omitting `allowedConnections` or sending `[]` denies all stored connection
 access and is not a deployment setting: there is no `OOMOL_CONNECT_ALLOWED_CONNECTIONS` variable.
 A non-empty list grants exact stable, opaque IDs returned by the connection APIs. Include the
 default connection's ID if unnamed HTTP, MCP, or proxy requests should succeed. Virtual `no_auth`

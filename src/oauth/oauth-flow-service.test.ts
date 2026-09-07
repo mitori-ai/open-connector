@@ -206,6 +206,36 @@ describe("OAuthFlowService", () => {
     });
   });
 
+  it("binds a validated scope-only override to the saved app without custom-client permission", async () => {
+    const services = createServices([oauthProvider]);
+    await services.clientConfigs.upsertConfig({
+      service: "example",
+      clientId: "saved-id",
+      clientSecret: "saved-secret",
+      extra: { tenant: "default" },
+    });
+    const input = {
+      service: "example",
+      tenantId: compatibilityTenantId,
+      sessionCorrelation: "synthetic-session-correlation",
+    };
+    const started = await services.flow.startAuthorization({ ...input, requestedScopes: ["read"] });
+    expect(new URL(started.authorizationUrl).searchParams.get("scope")).toBe("read");
+    expect(new URL(started.authorizationUrl).searchParams.get("client_id")).toBe("saved-id");
+    expect(await services.states.take(started.state)).toMatchObject({
+      clientConfig: { clientId: "saved-id", requestedScopes: ["read"] },
+    });
+    expect((await services.clientConfigs.getConfig("example"))?.requestedScopes).toBeUndefined();
+    for (const requestedScopes of [[], ["unknown"], [""]]) {
+      await expect(services.flow.startAuthorization({ ...input, requestedScopes })).rejects.toMatchObject({
+        code: "invalid_input",
+      });
+    }
+    await expect(
+      services.flow.startAuthorization({ ...input, clientConfig: { clientId: "custom", clientSecret: "secret" } }),
+    ).rejects.toMatchObject({ code: "oauth_custom_app_not_allowed" });
+  });
+
   it("uses the requested scope subset from the OAuth client config", async () => {
     const services = createServices([oauthProvider]);
     await services.clientConfigs.upsertConfig({

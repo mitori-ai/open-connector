@@ -103,10 +103,10 @@ export class OAuthClientConfigService {
     const clientId = input.clientId.trim();
     const clientSecret = input.clientSecret.trim();
     if (!clientId) {
-      throw new OAuthClientConfigError("invalid_input", "clientId is required.");
+      throw new OAuthClientConfigError("invalid_input", "clientId is required.", "clientId");
     }
     if (!clientSecret && auth.tokenEndpointAuthMethod !== "none") {
-      throw new OAuthClientConfigError("invalid_input", "clientSecret is required.");
+      throw new OAuthClientConfigError("invalid_input", "clientSecret is required.", "clientSecret");
     }
 
     const submittedExtra = input.extra ?? {};
@@ -230,7 +230,11 @@ export function readOAuthClientConfigMetadata(
 export class OAuthClientConfigError extends Error {
   readonly code: string;
 
-  constructor(code: string, message: string) {
+  constructor(
+    code: string,
+    message: string,
+    readonly field?: "clientId" | "clientSecret" | "requestedScopes",
+  ) {
     super(message);
     this.code = code;
   }
@@ -288,15 +292,27 @@ function normalizeRequestedScopes(
     return undefined;
   }
   if (!Array.isArray(requestedScopes) || requestedScopes.some((scope) => typeof scope !== "string")) {
-    throw new OAuthClientConfigError("invalid_input", "requestedScopes must be an array of strings.");
+    throw new OAuthClientConfigError(
+      "invalid_input",
+      "requestedScopes must be an array of strings.",
+      "requestedScopes",
+    );
   }
 
   const normalized = [...new Set(requestedScopes.map((scope) => scope.trim()))];
   if (normalized.length === 0) {
-    throw new OAuthClientConfigError("invalid_input", "requestedScopes must contain at least one scope.");
+    throw new OAuthClientConfigError(
+      "invalid_input",
+      "requestedScopes must contain at least one scope.",
+      "requestedScopes",
+    );
   }
   if (normalized.some((scope) => !scope)) {
-    throw new OAuthClientConfigError("invalid_input", "requestedScopes must not contain empty values.");
+    throw new OAuthClientConfigError(
+      "invalid_input",
+      "requestedScopes must not contain empty values.",
+      "requestedScopes",
+    );
   }
 
   const declaredScopes = new Set(providerScopes);
@@ -305,6 +321,7 @@ function normalizeRequestedScopes(
     throw new OAuthClientConfigError(
       "invalid_input",
       `requestedScopes contains a scope not declared by ${service}: ${undeclaredScope}.`,
+      "requestedScopes",
     );
   }
 
