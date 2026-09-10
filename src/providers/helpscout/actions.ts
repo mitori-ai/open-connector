@@ -422,6 +422,11 @@ export const helpscoutActions: ActionDefinition[] = [
         tagNames: s.stringArray("The tags applied to the new conversation.", {
           itemDescription: "One Help Scout tag name.",
         }),
+        cc: s.array(
+          "Email addresses copied on the initial conversation thread.",
+          s.email("One copied email address."),
+          { maxItems: 50 },
+        ),
         customFields: customFieldValuesSchema,
       },
       {
@@ -437,6 +442,7 @@ export const helpscoutActions: ActionDefinition[] = [
           "assignedUserId",
           "autoReply",
           "tagNames",
+          "cc",
           "customFields",
         ],
       },
