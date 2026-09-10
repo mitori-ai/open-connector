@@ -12,4 +12,9 @@ export const gmailSendScopes: string[] = [gmailSendScope];
 export const gmailLabelScopes: string[] = [gmailLabelsScope];
 export const gmailSettingsBasicScopes: string[] = [gmailSettingsBasicScope];
 
-export const gmailOAuthScopes: string[] = [gmailModifyScope, gmailLabelsScope, gmailSettingsBasicScope];
+export const gmailOAuthScopes: string[] = [
+  gmailReadonlyScope,
+  gmailModifyScope,
+  gmailLabelsScope,
+  gmailSettingsBasicScope,
+];

@@ -212,7 +212,7 @@ describe("ProxyRunner", () => {
     expect(proxy).not.toHaveBeenCalled();
   });
 
-  it("executes allowlisted proxy connections and leaves unrestricted tokens unchanged", async () => {
+  it("executes allowlisted proxy connections and denies explicit empty grants", async () => {
     const proxy: ProviderProxyExecutor = vi.fn(
       async (): Promise<ProxyExecutionResult> => ({
         ok: true,
@@ -252,8 +252,8 @@ describe("ProxyRunner", () => {
         }),
         tenantId: compatibilityTenantId,
       }),
-    ).resolves.toMatchObject({ ok: true });
-    expect(proxy).toHaveBeenCalledTimes(2);
+    ).resolves.toMatchObject({ ok: false, status: 403, errorCode: "connection_not_allowed" });
+    expect(proxy).toHaveBeenCalledTimes(1);
   });
 
   it("does not apply connection grants to no-auth proxies", async () => {

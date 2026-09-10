@@ -10,6 +10,7 @@ import type {
 import { createHash, randomBytes } from "node:crypto";
 import { defaultConnectionName } from "../connection-service.ts";
 import { normalizeSlackAuthorizationCredential } from "../providers/slack/oauth.ts";
+import { OAuthClientConfigError } from "./oauth-client-config-service.ts";
 import { requestAuthorizationCodeToken } from "./oauth-token.ts";
 
 /**
@@ -28,6 +29,8 @@ export interface OAuthAuthorizationStartInput {
   sessionCorrelation: string;
   returnUrl?: string;
   clientConfig?: OAuthClientConfigInput;
+  /** Per-authorization declared scopes; does not select a custom OAuth app. */
+  requestedScopes?: string[];
 }
 
 export interface OAuthAuthorizationCompleteInput {
@@ -99,11 +102,28 @@ export class OAuthFlowService {
     const connectionName = input.connectionName ?? defaultConnectionName;
     this.connections.assertProviderAvailable(service);
     const auth = this.clientConfigs.getOAuthDefinition(service);
-    const config = input.clientConfig
+    let config = input.clientConfig
       ? this.resolveCustomClientConfig(service, input.clientConfig)
       : await this.clientConfigs.getConfig(service);
     if (!config) {
       throw new OAuthFlowError("oauth_client_config_required", `Configure an OAuth client for ${service} first.`);
+    }
+
+    if (input.requestedScopes !== undefined) {
+      const savedScopes = config.requestedScopes;
+      // A saved app's explicit scope policy is a ceiling, not a mutable default.
+      if (
+        !input.clientConfig &&
+        savedScopes &&
+        input.requestedScopes.some((scope) => !savedScopes.includes(scope.trim()))
+      ) {
+        throw new OAuthClientConfigError(
+          "invalid_input",
+          "requestedScopes exceeds the saved app scope policy.",
+          "requestedScopes",
+        );
+      }
+      config = this.clientConfigs.normalizeConfig(service, { ...config, requestedScopes: input.requestedScopes });
     }
 
     const state = crypto.randomUUID();
@@ -116,7 +136,7 @@ export class OAuthFlowService {
       createdAt: new Date().toISOString(),
       sessionCorrelation: input.sessionCorrelation,
       pkceCodeVerifier,
-      clientConfig: input.clientConfig ? config : undefined,
+      clientConfig: input.clientConfig || input.requestedScopes !== undefined ? config : undefined,
       returnUrl,
     });
 

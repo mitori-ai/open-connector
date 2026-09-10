@@ -294,7 +294,7 @@ describe("ActionPolicyService", () => {
     });
   });
 
-  it("treats omitted and empty allowedConnections as unrestricted connection access", () => {
+  it("preserves unrestricted connection access only when allowedConnections is omitted", () => {
     const unrestricted = [
       new ActionPolicyService().createSnapshot(),
       new ActionPolicyService().createSnapshot(undefined, {
@@ -302,18 +302,24 @@ describe("ActionPolicyService", () => {
         blockedActions: [],
         allowedProxies: [],
       }),
-      new ActionPolicyService().createSnapshot(undefined, {
-        allowedActions: [],
-        blockedActions: [],
-        allowedProxies: [],
-        allowedConnections: [],
-      }),
     ];
 
     for (const snapshot of unrestricted) {
       expect(snapshot.evaluateConnection()).toEqual({ allowed: true, checks: [] });
       expect(snapshot.evaluateConnection(workConnectionId)).toEqual({ allowed: true, checks: [] });
       expect(snapshot.evaluate(action)).toEqual({ allowed: true, checks: [] });
+    }
+  });
+
+  it("denies every connection for an explicit empty token grant", () => {
+    const snapshot = new ActionPolicyService().createSnapshot(undefined, {
+      allowedActions: ["*"],
+      blockedActions: [],
+      allowedProxies: ["*"],
+      allowedConnections: [],
+    });
+    for (const id of [undefined, workConnectionId, defaultConnectionId, otherConnectionId]) {
+      expect(snapshot.evaluateConnection(id)).toMatchObject({ allowed: false, code: "connection_not_allowed" });
     }
   });
 

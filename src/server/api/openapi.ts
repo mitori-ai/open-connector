@@ -412,6 +412,9 @@ export function createOpenApiDocument(
           {
             tenantId: jsonSchema.string({ description: "Credential-derived immutable tenant identifier." }),
             capability: { type: "string", enum: ["tenant-admin"] },
+            capabilities: jsonSchema.array(jsonSchema.string(), {
+              description: "Versioned behavioral contracts supported by this producer.",
+            }),
           },
           { required: ["tenantId", "capability"] },
         ),
@@ -693,7 +696,7 @@ export function createOpenApiDocument(
               "Provider proxies explicitly granted to this token. An empty list grants no proxy access.",
             ),
             allowedConnections: connectionIdArraySchema(
-              "Stable connection IDs granted to this stored runtime token. An empty list is unrestricted connection access. IDs are opaque values returned by the connection APIs. Virtual no_auth connections do not require grants.",
+              "Stable connection IDs granted to this stored runtime token. An empty list denies access to every stored connection. IDs are opaque values returned by the connection APIs. Virtual no_auth connections do not require grants.",
             ),
             createdAt: jsonSchema.string({ description: "Creation timestamp." }),
             lastUsedAt: jsonSchema.string({ description: "Last successful use timestamp." }),
@@ -720,7 +723,7 @@ export function createOpenApiDocument(
               "Optional provider proxy grants for the new token. Omit or leave empty to deny proxy access.",
             ),
             allowedConnections: connectionIdArraySchema(
-              "Optional stable connection IDs granted to the new token. Omit or leave empty for unrestricted connection access. A non-empty list matches exact opaque IDs returned by the connection APIs. Virtual no_auth connections do not require grants.",
+              "Optional stable connection IDs granted to the new token. Omit or leave empty to deny access to every stored connection. A non-empty list matches exact opaque IDs returned by the connection APIs. Virtual no_auth connections do not require grants.",
             ),
           },
           {
@@ -736,7 +739,7 @@ export function createOpenApiDocument(
               "Provider proxies explicitly granted to this token. An empty list grants no proxy access.",
             ),
             allowedConnections: connectionIdArraySchema(
-              "Stable connection IDs granted to this stored token. An empty list is unrestricted connection access. A non-empty list matches exact opaque IDs returned by the connection APIs. Virtual no_auth connections do not require grants.",
+              "Stable connection IDs granted to this stored token. An empty list denies access to every stored connection. A non-empty list matches exact opaque IDs returned by the connection APIs. Virtual no_auth connections do not require grants.",
             ),
           },
           {
@@ -1548,7 +1551,8 @@ function createOAuthAuthorizationPath(): Record<string, unknown> {
                 clientSecret: jsonSchema.string({ description: "Optional connection-scoped OAuth app client secret." }),
                 requestedScopes: jsonSchema.array(jsonSchema.string(), {
                   minItems: 1,
-                  description: "Optional non-empty provider-declared scope subset to request.",
+                  description:
+                    "Optional non-empty provider-declared scope subset to request. Without client fields, uses the saved Default App and does not require custom app permission.",
                 }),
                 extra: {
                   type: "object",

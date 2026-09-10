@@ -201,7 +201,11 @@ describe("shared runtime tenant isolation", () => {
       tenantId: tenantA,
     });
     const context = await app.request("/api/tenant/context", { headers: { cookie: scopedCookies } });
-    await expect(context.json()).resolves.toEqual({ tenantId: tenantA, capability: "tenant-admin" });
+    await expect(context.json()).resolves.toEqual({
+      tenantId: tenantA,
+      capability: "tenant-admin",
+      capabilities: ["oauth_default_app_scope_override_v1", "runtime_token_explicit_empty_connections_deny_v1"],
+    });
     expect((await app.request("/api/tenant/providers", { headers: { cookie: scopedCookies } })).status).toBe(200);
     expect((await app.request("/api/tenant/actions", { headers: { cookie: scopedCookies } })).status).toBe(200);
     expect((await app.request("/api/tenant/runtime-tokens", { headers: { cookie: scopedCookies } })).status).toBe(200);

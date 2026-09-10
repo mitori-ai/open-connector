@@ -4,6 +4,7 @@ import { provider } from "./definition.ts";
 const gmailSettingsSharingScope = "https://www.googleapis.com/auth/gmail.settings.sharing";
 const gmailSettingsBasicScope = "https://www.googleapis.com/auth/gmail.settings.basic";
 const gmailLabelsScope = "https://www.googleapis.com/auth/gmail.labels";
+const gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly";
 const gmailModifyScope = "https://www.googleapis.com/auth/gmail.modify";
 
 describe("Gmail provider definition", () => {
@@ -13,10 +14,10 @@ describe("Gmail provider definition", () => {
     expect(oauth?.scopes).not.toContain(gmailSettingsSharingScope);
   });
 
-  it("requests only the least scopes that cover the full Gmail action catalog", () => {
+  it("declares readonly setup as well as scopes for the full Gmail action catalog", () => {
     const oauth = provider.auth.find((auth) => auth.type === "oauth2");
 
-    expect(oauth?.scopes).toEqual([gmailModifyScope, gmailLabelsScope, gmailSettingsBasicScope]);
+    expect(oauth?.scopes).toEqual([gmailReadonlyScope, gmailModifyScope, gmailLabelsScope, gmailSettingsBasicScope]);
   });
 
   it("uses a user-authorizable scope for forwarding read actions", () => {

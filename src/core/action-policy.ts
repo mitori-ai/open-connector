@@ -72,7 +72,7 @@ export class ActionPolicySnapshot {
   private readonly layers: CompiledLayer[];
   private readonly proxyLayers: CompiledLayer[];
   private readonly tokenProxyRules?: CompiledRule[];
-  private readonly allowedConnections: readonly string[];
+  private readonly allowedConnections?: readonly string[];
 
   constructor(deployment: PolicyRules, runtime: PolicyRules, token?: TokenPolicy, updatedAt?: string) {
     const deploymentRules = immutablePolicyRules(deployment);
@@ -80,7 +80,8 @@ export class ActionPolicySnapshot {
     this.state = Object.freeze({ deployment: deploymentRules, runtime: runtimeRules, updatedAt });
     this.proxyLayers = [compileLayer("deployment", deploymentRules), compileLayer("runtime", runtimeRules)];
     this.layers = [...this.proxyLayers];
-    this.allowedConnections = Object.freeze([...(token?.allowedConnections ?? [])]);
+    this.allowedConnections =
+      token?.allowedConnections === undefined ? undefined : Object.freeze([...token.allowedConnections]);
     if (token) {
       const tokenRules = immutablePolicyRules({
         allowedActions: token.allowedActions,
@@ -174,7 +175,7 @@ export class ActionPolicySnapshot {
   }
 
   evaluateConnection(connectionId?: string): ActionPolicyDecision {
-    if (this.allowedConnections.length === 0) {
+    if (this.allowedConnections === undefined) {
       return { allowed: true, checks: [] };
     }
 
