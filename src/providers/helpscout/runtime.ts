@@ -234,6 +234,7 @@ export const helpscoutActionHandlers: Record<string, HelpscoutActionHandler> = {
     const thread = compactObject({
       type: threadType,
       text: requireNonEmptyString(input.text, "text"),
+      cc: readCreateCc(input.cc, threadType),
       customer: threadType === "note" ? undefined : customer,
     });
     const { response } = await requestHelpscout({
@@ -648,4 +649,16 @@ function redactSecrets(message: string, secrets: readonly string[]) {
     }
   }
   return redacted;
+}
+
+/** Cc belongs to the initial message thread, not the conversation envelope. */
+function readCreateCc(value: unknown, threadType: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  const emails = readOptionalStringArray(value, "cc");
+  if (!emails || emails.length > 50 || emails.some((email) => !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email))) {
+    throw new HelpscoutError("invalid_input", "cc must contain valid email addresses", 400);
+  }
+  if (threadType === "note" && emails.length)
+    throw new HelpscoutError("invalid_input", "Internal notes cannot have Cc recipients", 400);
+  return emails;
 }

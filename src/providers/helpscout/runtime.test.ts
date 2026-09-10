@@ -111,3 +111,60 @@ async function captureError(run: () => Promise<unknown>): Promise<Error> {
   }
   throw new Error("Expected operation to fail");
 }
+
+describe("Help Scout create conversation Cc", () => {
+  it.each(["customer", "reply"])("preserves customer identity and initial %s thread recipients", async (threadType) => {
+    const fetcher = vi.fn(
+      async (_request: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(null, { status: 201, headers: { "resource-id": "9001" } }),
+    );
+    await helpscoutActionHandlers.create_conversation!(
+      {
+        inboxId: 7,
+        customerEmail: "sending@example.invalid",
+        cc: ["receiving@example.invalid"],
+        subject: "TEST communication",
+        text: "Hello",
+        threadType,
+      },
+      { accessToken, fetcher: fetcher as typeof fetch },
+    );
+    const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+    expect(body.customer).toEqual({ email: "sending@example.invalid" });
+    expect(body.threads).toEqual([
+      {
+        type: threadType,
+        text: "Hello",
+        customer: { email: "sending@example.invalid" },
+        cc: ["receiving@example.invalid"],
+      },
+    ]);
+    expect(body).not.toHaveProperty("cc");
+  });
+  it("rejects malformed Cc and note recipients before network access", async () => {
+    const fetcher = vi.fn();
+    for (const input of [
+      { cc: ["not-an-email"] },
+      { cc: ["a@example.invalid\r\nBcc: other@example.invalid"] },
+      { threadType: "note", cc: ["a@example.invalid"] },
+    ]) {
+      await expect(
+        helpscoutActionHandlers.create_conversation!(
+          { inboxId: 7, customerEmail: "sending@example.invalid", subject: "TEST", text: "Hello", ...input },
+          { accessToken, fetcher: fetcher as typeof fetch },
+        ),
+      ).rejects.toThrow();
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("keeps omitted Cc absent for existing callers", async () => {
+    const fetcher = vi.fn(
+      async (_request: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 201 }),
+    );
+    await helpscoutActionHandlers.create_conversation!(
+      { inboxId: 7, customerEmail: "sending@example.invalid", subject: "TEST", text: "Hello" },
+      { accessToken, fetcher: fetcher as typeof fetch },
+    );
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)).threads[0]).not.toHaveProperty("cc");
+  });
+});
