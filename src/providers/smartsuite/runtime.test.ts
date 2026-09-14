@@ -7,6 +7,187 @@ const apiKey = "smartsuite-secret-api-key";
 const workspaceId = "workspace-secret-id";
 
 describe("SmartSuite compatibility runtime", () => {
+  it("reads complete table metadata with a GET and exposes normalized fields", async () => {
+    expect(smartsuiteActions.map((action) => action.name)).toContain("get_table_metadata");
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe("https://app.smartsuite.com/api/v1/applications/table-1/");
+      expect(init?.method).toBe("GET");
+      expect(init?.body).toBeUndefined();
+      return Response.json({
+        id: "table-1",
+        name: "Transportations",
+        solution: "solution-1",
+        structure: [
+          {
+            slug: "processing_facility",
+            label: "Processing Facility",
+            field_type: "singleselectfield",
+            params: { choices: [{ label: "Atlanta", value: "facility-1" }] },
+          },
+          {
+            slug: "link_to_shippers",
+            label: "Link to NTP Shippers",
+            field_type: "linkedrecordfield",
+            params: { linked_application: "shippers-table", linked_field_slug: "title" },
+          },
+        ],
+      });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId },
+          actionName: "get_table_metadata",
+          input: { tableId: "table-1" },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toMatchObject({
+      table: { id: "table-1", name: "Transportations" },
+      fields: [
+        {
+          slug: "processing_facility",
+          field_type: "singleselectfield",
+          params: { choices: [{ label: "Atlanta", value: "facility-1" }] },
+        },
+        {
+          slug: "link_to_shippers",
+          field_type: "linkedrecordfield",
+          params: { linked_application: "shippers-table", linked_field_slug: "title" },
+        },
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a bounded metadata response larger than the record response limit", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        id: "table-1",
+        structure: [{ slug: "large_field", label: "x".repeat(1024 * 1024 + 1) }],
+      }),
+    );
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId },
+          actionName: "get_table_metadata",
+          input: { tableId: "table-1" },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toMatchObject({ fields: [{ slug: "large_field" }] });
+  });
+
+  it("normalizes fields_metadata maps without mutating the table response", async () => {
+    const table = {
+      id: "table-1",
+      fields_metadata: {
+        status: { label: "Status", field_type: "statusfield" },
+      },
+    };
+    const fetchMock = vi.fn(async () => Response.json(table));
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId },
+          actionName: "get_table_metadata",
+          input: { tableId: "table-1" },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({
+      table,
+      fields: [{ slug: "status", label: "Status", field_type: "statusfield" }],
+    });
+    expect(table.fields_metadata.status).not.toHaveProperty("slug");
+  });
+
+  it.each(["add_field", "bulk_add_fields", "change_field"] as const)(
+    "restricts %s to the replica workspace before making a request",
+    async (actionName) => {
+      const fetchMock = vi.fn(async () => Response.json({}));
+
+      await expect(
+        executeSmartsuiteAction(
+          {
+            apiKey,
+            values: { workspaceId: "sgidtdqr" },
+            actionName,
+            input:
+              actionName === "bulk_add_fields"
+                ? { tableId: "table-1", fields: [{ slug: "field-1" }] }
+                : { tableId: "table-1", field: { slug: "field-1", label: "Field 1", field_type: "textfield" } },
+          },
+          fetchMock as typeof fetch,
+        ),
+      ).rejects.toThrow(/restricted to replica workspace se4hznb4/u);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("uses the documented replica field mutation methods and paths", async () => {
+    const requests: Array<{ url: string; method: string | undefined; body: string | undefined }> = [];
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(request), method: init?.method, body: String(init?.body) });
+      return new Response(null, { status: 204 });
+    });
+    const field = { slug: "field-1", label: "Field 1", field_type: "textfield", params: {} };
+
+    await expect(
+      executeSmartsuiteAction(
+        { apiKey, values: { workspaceId: "se4hznb4" }, actionName: "add_field", input: { tableId: "table-1", field } },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ applied: true });
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "bulk_add_fields",
+          input: { tableId: "table-1", fields: [field], setAsVisibleFieldsInReports: ["view-1"] },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ applied: true });
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "change_field",
+          input: { tableId: "table-1", field },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ applied: true });
+
+    expect(requests).toEqual([
+      {
+        url: "https://app.smartsuite.com/api/v1/applications/table-1/add_field/",
+        method: "POST",
+        body: JSON.stringify({ field, field_position: undefined, auto_fill_structure_layout: undefined }),
+      },
+      {
+        url: "https://app.smartsuite.com/api/v1/applications/table-1/bulk-add-fields/",
+        method: "POST",
+        body: JSON.stringify({ fields: [field], set_as_visible_fields_in_reports: ["view-1"] }),
+      },
+      {
+        url: "https://app.smartsuite.com/api/v1/applications/table-1/change_field/",
+        method: "PUT",
+        body: JSON.stringify(field),
+      },
+    ]);
+  });
+
   it("keeps search_records and the all compatibility input", async () => {
     expect(smartsuiteActions.map((action) => action.name)).toContain("search_records");
     const fetchMock = vi.fn(async (_request: RequestInfo | URL, _init?: RequestInit) =>

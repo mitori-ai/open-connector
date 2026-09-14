@@ -19,6 +19,20 @@ const tableSchema = s.looseObject("A SmartSuite Table returned by the API.", {
   name: s.string("The Table name."),
   solution: idSchema("The ID of the Solution containing the Table."),
 });
+const tableMetadataSchema = s.looseObject("A SmartSuite Table metadata object returned by the detail endpoint.", {
+  id: s.optional(idSchema("The Table ID.")),
+  name: s.optional(s.string("The Table name.")),
+  solution: s.optional(idSchema("The ID of the Solution containing the Table.")),
+});
+const tableMetadataFieldSchema = s.looseObject("A SmartSuite field metadata object.", {
+  id: s.optional(idSchema("The SmartSuite field ID, when returned.")),
+  slug: s.optional(s.string("The SmartSuite field slug, when returned.")),
+  label: s.optional(s.string("The SmartSuite field label, when returned.")),
+  field_type: s.optional(s.string("The SmartSuite field type, when returned.")),
+  params: s.optional(s.looseObject("SmartSuite field parameters, including choices and linked-field metadata.")),
+});
+const smartSuiteFieldDefinitionSchema = s.looseObject("A SmartSuite field definition for replica metadata changes.");
+const smartSuiteFieldPositionSchema = s.looseObject("Optional SmartSuite field placement metadata.");
 
 const emptyInputSchema = s.object("No input is required.", {});
 const recordIdentityInputFields = {
@@ -50,6 +64,75 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     outputSchema: s.object("The accessible SmartSuite Tables.", {
       tables: s.array("The accessible Tables.", tableSchema),
     }),
+  }),
+  defineProviderAction(service, {
+    name: "get_table_metadata",
+    description:
+      "Get one SmartSuite Table's read-only metadata, including fields, select options, hidden flags, and linked-field metadata.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for reading SmartSuite Table metadata.", {
+      tableId: idSchema("The SmartSuite Table ID."),
+    }),
+    outputSchema: s.requiredObject("The SmartSuite Table metadata response.", {
+      table: tableMetadataSchema,
+      fields: s.array("Normalized field metadata extracted from the Table structure.", tableMetadataFieldSchema),
+    }),
+    followUpActions: ["smartsuite.list_records"],
+  }),
+  defineProviderAction(service, {
+    name: "add_field",
+    description: "Add one field to the se4hznb4 SmartSuite replica using SmartSuite's documented add-field endpoint.",
+    requiredScopes: [],
+    inputSchema: s.object(
+      "The input payload for adding one field to the SmartSuite replica.",
+      {
+        tableId: idSchema("The SmartSuite replica Table ID."),
+        field: smartSuiteFieldDefinitionSchema,
+        fieldPosition: smartSuiteFieldPositionSchema,
+        autoFillStructureLayout: s.boolean("Whether SmartSuite should fill the record layout automatically."),
+      },
+      { optional: ["fieldPosition", "autoFillStructureLayout"] },
+    ),
+    outputSchema: s.requiredObject("The SmartSuite replica field addition response.", {
+      applied: s.boolean("Whether SmartSuite accepted the field addition."),
+    }),
+    followUpActions: ["smartsuite.get_table_metadata"],
+  }),
+  defineProviderAction(service, {
+    name: "bulk_add_fields",
+    description:
+      "Add multiple fields to the se4hznb4 SmartSuite replica using SmartSuite's documented bulk-add-fields endpoint.",
+    requiredScopes: [],
+    inputSchema: s.object(
+      "The input payload for adding fields to the SmartSuite replica.",
+      {
+        tableId: idSchema("The SmartSuite replica Table ID."),
+        fields: s.array("SmartSuite field definitions to add.", smartSuiteFieldDefinitionSchema, { minItems: 1 }),
+        setAsVisibleFieldsInReports: s.array(
+          "Optional replica view IDs where the added fields should be visible.",
+          idSchema("A SmartSuite replica view ID."),
+        ),
+      },
+      { optional: ["setAsVisibleFieldsInReports"] },
+    ),
+    outputSchema: s.requiredObject("The SmartSuite replica bulk field addition response.", {
+      applied: s.boolean("Whether SmartSuite accepted the field additions."),
+    }),
+    followUpActions: ["smartsuite.get_table_metadata"],
+  }),
+  defineProviderAction(service, {
+    name: "change_field",
+    description:
+      "Update one field in the se4hznb4 SmartSuite replica using SmartSuite's documented change-field endpoint.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for updating one SmartSuite replica field.", {
+      tableId: idSchema("The SmartSuite replica Table ID."),
+      field: smartSuiteFieldDefinitionSchema,
+    }),
+    outputSchema: s.requiredObject("The SmartSuite replica field update response.", {
+      applied: s.boolean("Whether SmartSuite accepted the field update."),
+    }),
+    followUpActions: ["smartsuite.get_table_metadata"],
   }),
   defineProviderAction(service, {
     name: "list_records",

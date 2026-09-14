@@ -17,6 +17,8 @@ interface ApiKeyProviderActionInput {
 export const smartsuiteApiBaseUrl = "https://app.smartsuite.com/api/v1";
 const smartsuiteRequestTimeoutMs = 30_000;
 const smartsuiteMaxResponseBytes = 1024 * 1024;
+const smartsuiteMetadataMaxResponseBytes = 20 * 1024 * 1024;
+const smartsuiteReplicaWorkspaceId = "se4hznb4";
 
 interface SmartsuiteActionInput extends ApiKeyProviderActionInput {
   actionName: string;
@@ -32,6 +34,7 @@ interface SmartsuiteRequestInput {
   body?: Record<string, unknown>;
   phase: "validate" | "execute";
   allowEmpty?: boolean;
+  maxResponseBytes?: number;
 }
 
 type SmartsuiteRequest = (
@@ -82,6 +85,57 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
       return {
         tables: requireArray(await request({ path: "/applications/", query: { solution: solutionId } }), "tables"),
       };
+    }
+    case "get_table_metadata": {
+      const table = requireObject(
+        await request({
+          path: `/applications/${encodeURIComponent(readRequiredString(input.input.tableId, "tableId"))}/`,
+          method: "GET",
+          maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+        }),
+        "table metadata",
+      );
+      const fields = readTableMetadataFields(table);
+      return { table, fields };
+    }
+    case "add_field": {
+      requireReplicaWorkspace(workspaceId, "add_field");
+      await request({
+        path: `/applications/${encodeURIComponent(readRequiredString(input.input.tableId, "tableId"))}/add_field/`,
+        method: "POST",
+        body: jsonObject({
+          field: requireInputObject(input.input.field, "field"),
+          field_position: optionalRecord(input.input.fieldPosition),
+          auto_fill_structure_layout: optionalBoolean(input.input.autoFillStructureLayout),
+        }),
+        allowEmpty: true,
+      });
+      return { applied: true };
+    }
+    case "bulk_add_fields": {
+      requireReplicaWorkspace(workspaceId, "bulk_add_fields");
+      const fields = requireArray(input.input.fields, "fields");
+      if (fields.length === 0) throw new ProviderRequestError(400, "SmartSuite requires at least one field");
+      await request({
+        path: `/applications/${encodeURIComponent(readRequiredString(input.input.tableId, "tableId"))}/bulk-add-fields/`,
+        method: "POST",
+        body: jsonObject({
+          fields,
+          set_as_visible_fields_in_reports: readOptionalStringArray(input.input.setAsVisibleFieldsInReports),
+        }),
+        allowEmpty: true,
+      });
+      return { applied: true };
+    }
+    case "change_field": {
+      requireReplicaWorkspace(workspaceId, "change_field");
+      await request({
+        path: `/applications/${encodeURIComponent(readRequiredString(input.input.tableId, "tableId"))}/change_field/`,
+        method: "PUT",
+        body: requireInputObject(input.input.field, "field"),
+        allowEmpty: true,
+      });
+      return { applied: true };
     }
     case "list_records":
     case "search_records": {
@@ -290,7 +344,7 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
       signal: timeout.signal,
     });
-    const payload = await readPayload(response, input.allowEmpty === true);
+    const payload = await readPayload(response, input.allowEmpty === true, input.maxResponseBytes);
     if (!response.ok) {
       throw createSmartsuiteError(response, payload, input.phase, input.apiKey, input.workspaceId);
     }
@@ -318,8 +372,12 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
   }
 }
 
-async function readPayload(response: Response, allowEmpty: boolean) {
-  const text = await readProviderTextBody(response, "SmartSuite response", smartsuiteMaxResponseBytes);
+async function readPayload(response: Response, allowEmpty: boolean, maxResponseBytes?: number) {
+  const text = await readProviderTextBody(
+    response,
+    "SmartSuite response",
+    maxResponseBytes ?? smartsuiteMaxResponseBytes,
+  );
   if (text.trim() === "") {
     if (allowEmpty || !response.ok) return null;
     throw invalidPayload("response did not include JSON");
@@ -361,6 +419,15 @@ function readWorkspaceId(input: Record<string, unknown> | undefined) {
   return readRequiredString(input?.workspaceId, "workspaceId");
 }
 
+function requireReplicaWorkspace(workspaceId: string, actionName: string): void {
+  if (workspaceId !== smartsuiteReplicaWorkspaceId) {
+    throw new ProviderRequestError(
+      403,
+      `SmartSuite ${actionName} is restricted to replica workspace ${smartsuiteReplicaWorkspaceId}`,
+    );
+  }
+}
+
 function readRequiredString(value: unknown, field: string) {
   const result = optionalString(value);
   if (!result) throw new ProviderRequestError(400, `SmartSuite requires ${field}`);
@@ -389,6 +456,32 @@ function requireObject(value: unknown, label: string) {
 function requireArray(value: unknown, label: string) {
   if (!Array.isArray(value)) throw invalidPayload(`${label} response was not an array`);
   return value;
+}
+
+function readOptionalStringArray(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
+    throw new ProviderRequestError(400, "SmartSuite view IDs must be a non-empty string array");
+  }
+  return value.map((item) => item.trim());
+}
+
+function readTableMetadataFields(table: Record<string, unknown>): Record<string, unknown>[] {
+  for (const key of ["structure", "fields"]) {
+    const value = table[key];
+    if (Array.isArray(value)) {
+      return value.filter((item): item is Record<string, unknown> => optionalRecord(item) !== undefined);
+    }
+  }
+
+  const fieldsMetadata = optionalRecord(table.fields_metadata);
+  if (!fieldsMetadata) return [];
+
+  return Object.entries(fieldsMetadata).flatMap(([slug, value]) => {
+    const field = optionalRecord(value);
+    if (!field) return [];
+    return [{ ...field, slug: field.slug ?? slug }];
+  });
 }
 
 function readRequiredInteger(value: unknown, field: string) {
