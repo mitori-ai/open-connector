@@ -18,7 +18,6 @@ export const smartsuiteApiBaseUrl = "https://app.smartsuite.com/api/v1";
 const smartsuiteRequestTimeoutMs = 30_000;
 const smartsuiteMaxResponseBytes = 1024 * 1024;
 const smartsuiteMetadataMaxResponseBytes = 20 * 1024 * 1024;
-const smartsuiteReplicaWorkspaceId = "se4hznb4";
 
 interface SmartsuiteActionInput extends ApiKeyProviderActionInput {
   actionName: string;
@@ -149,166 +148,6 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
           "folders",
         ),
       };
-    }
-    case "create_view": {
-      requireReplicaWorkspace(workspaceId, "create_view");
-      const tableId = readRequiredString(input.input.tableId, "tableId");
-      const solutionId = readRequiredString(input.input.solutionId, "solutionId");
-      const view = requireInputObject(input.input.view, "view");
-      if (view.application !== tableId || view.solution !== solutionId) {
-        throw new ProviderRequestError(
-          400,
-          "SmartSuite create_view application and solution must match the replica IDs.",
-        );
-      }
-      return {
-        view: requireObject(
-          await request({
-            path: "/reports/",
-            method: "POST",
-            body: view,
-            allowEmpty: false,
-            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
-          }),
-          "created view",
-        ),
-      };
-    }
-    case "update_view": {
-      requireReplicaWorkspace(workspaceId, "update_view");
-      const viewId = readRequiredString(input.input.viewId, "viewId");
-      return {
-        view: requireObject(
-          await request({
-            path: `/reports/${encodeURIComponent(viewId)}/?return_data=true`,
-            method: "PATCH",
-            body: requireInputObject(input.input.view, "view"),
-            allowEmpty: false,
-            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
-          }),
-          "updated view",
-        ),
-      };
-    }
-    case "delete_view": {
-      requireReplicaWorkspace(workspaceId, "delete_view");
-      const viewId = readRequiredString(input.input.viewId, "viewId");
-      await request({
-        path: `/reports/${encodeURIComponent(viewId)}/`,
-        method: "DELETE",
-        allowEmpty: true,
-      });
-      return { deleted: true };
-    }
-    case "create_folder": {
-      requireReplicaWorkspace(workspaceId, "create_folder");
-      const tableId = readRequiredString(input.input.tableId, "tableId");
-      const solutionId = readRequiredString(input.input.solutionId, "solutionId");
-      const folder = requireInputObject(input.input.folder, "folder");
-      if (folder.application !== tableId || folder.solution !== solutionId) {
-        throw new ProviderRequestError(
-          400,
-          "SmartSuite create_folder application and solution must match the replica IDs.",
-        );
-      }
-      return {
-        folder: requireObject(
-          await request({
-            path: "/folders/",
-            method: "POST",
-            body: folder,
-            allowEmpty: false,
-            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
-          }),
-          "created folder",
-        ),
-      };
-    }
-    case "create_dashboard_widget": {
-      requireReplicaWorkspace(workspaceId, "create_dashboard_widget");
-      const reportId = readRequiredString(input.input.reportId, "reportId");
-      const widget = requireInputObject(input.input.widget, "widget");
-      assertWidgetReport(widget, reportId);
-      return {
-        widget: requireObject(
-          await request({
-            path: "/dashboard/widgets/",
-            method: "POST",
-            body: widget,
-            allowEmpty: false,
-            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
-          }),
-          "created dashboard widget",
-        ),
-      };
-    }
-    case "update_dashboard_widget": {
-      requireReplicaWorkspace(workspaceId, "update_dashboard_widget");
-      const reportId = readRequiredString(input.input.reportId, "reportId");
-      const widgetId = readRequiredString(input.input.widgetId, "widgetId");
-      const widget = requireInputObject(input.input.widget, "widget");
-      assertWidgetReport(widget, reportId);
-      return {
-        widget: requireObject(
-          await request({
-            path: `/dashboard/widgets/${encodeURIComponent(widgetId)}/`,
-            method: "PATCH",
-            body: widget,
-            allowEmpty: false,
-            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
-          }),
-          "updated dashboard widget",
-        ),
-      };
-    }
-    case "delete_dashboard_widget": {
-      requireReplicaWorkspace(workspaceId, "delete_dashboard_widget");
-      const widgetId = readRequiredString(input.input.widgetId, "widgetId");
-      await request({
-        path: `/dashboard/widgets/${encodeURIComponent(widgetId)}/`,
-        method: "DELETE",
-        allowEmpty: true,
-      });
-      return { deleted: true };
-    }
-    case "add_field": {
-      requireReplicaWorkspace(workspaceId, "add_field");
-      await request({
-        path: `/applications/${encodeURIComponent(readRequiredString(input.input.tableId, "tableId"))}/add_field/`,
-        method: "POST",
-        body: jsonObject({
-          field: requireInputObject(input.input.field, "field"),
-          field_position: optionalRecord(input.input.fieldPosition),
-          auto_fill_structure_layout: optionalBoolean(input.input.autoFillStructureLayout),
-        }),
-        allowEmpty: true,
-      });
-      return { applied: true };
-    }
-    case "bulk_add_fields": {
-      requireReplicaWorkspace(workspaceId, "bulk_add_fields");
-      const fields = requireArray(input.input.fields, "fields");
-      if (fields.length === 0) throw new ProviderRequestError(400, "SmartSuite requires at least one field");
-      await request({
-        path: `/applications/${encodeURIComponent(readRequiredString(input.input.tableId, "tableId"))}/bulk-add-fields/`,
-        method: "POST",
-        body: jsonObject({
-          fields,
-          set_as_visible_fields_in_reports: readOptionalStringArray(input.input.setAsVisibleFieldsInReports),
-        }),
-        allowEmpty: true,
-      });
-      return { applied: true };
-    }
-    case "change_field": {
-      requireReplicaWorkspace(workspaceId, "change_field");
-      await request({
-        path: `/applications/${encodeURIComponent(readRequiredString(input.input.tableId, "tableId"))}/change_field/`,
-        method: "PUT",
-        body: requireInputObject(input.input.field, "field"),
-        allowEmpty: true,
-      });
-      return { applied: true };
     }
     case "list_records":
     case "search_records": {
@@ -592,23 +431,6 @@ function readWorkspaceId(input: Record<string, unknown> | undefined) {
   return readRequiredString(input?.workspaceId, "workspaceId");
 }
 
-function requireReplicaWorkspace(workspaceId: string, actionName: string): void {
-  if (workspaceId !== smartsuiteReplicaWorkspaceId) {
-    throw new ProviderRequestError(
-      403,
-      `SmartSuite ${actionName} is restricted to replica workspace ${smartsuiteReplicaWorkspaceId}`,
-    );
-  }
-}
-
-function assertWidgetReport(widget: Record<string, unknown>, reportId: string): void {
-  const widgetReport =
-    optionalString(widget.report) ?? optionalString(widget.report_id) ?? optionalString(widget.reportId);
-  if (widgetReport && widgetReport !== reportId) {
-    throw new ProviderRequestError(400, "SmartSuite widget report must match reportId.");
-  }
-}
-
 function readRequiredString(value: unknown, field: string) {
   const result = optionalString(value);
   if (!result) throw new ProviderRequestError(400, `SmartSuite requires ${field}`);
@@ -637,14 +459,6 @@ function requireObject(value: unknown, label: string) {
 function requireArray(value: unknown, label: string) {
   if (!Array.isArray(value)) throw invalidPayload(`${label} response was not an array`);
   return value;
-}
-
-function readOptionalStringArray(value: unknown): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
-    throw new ProviderRequestError(400, "SmartSuite view IDs must be a non-empty string array");
-  }
-  return value.map((item) => item.trim());
 }
 
 function readTableMetadataFields(table: Record<string, unknown>): Record<string, unknown>[] {
