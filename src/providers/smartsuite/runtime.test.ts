@@ -109,6 +109,29 @@ describe("SmartSuite compatibility runtime", () => {
     expect(table.fields_metadata.status).not.toHaveProperty("slug");
   });
 
+  it.each([
+    ["list_views", "/reports/", "views", [{ id: "view-1", label: "Dallas Scheduling", state: {} }]],
+    ["list_folders", "/folders/", "folders", [{ id: "folder-1", label: "Dallas Scheduling" }]],
+  ] as const)("reads %s with a GET and no request body", async (actionName, path, key, value) => {
+    expect(smartsuiteActions.map((action) => action.name)).toContain(actionName);
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(request));
+      expect(url.pathname).toBe(`/api/v1${path}`);
+      expect(url.searchParams.get("application")).toBe("table-1");
+      expect(init?.method).toBe("GET");
+      expect(init?.body).toBeUndefined();
+      return Response.json(value);
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        { apiKey, values: { workspaceId }, actionName, input: { tableId: "table-1" } },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ [key]: value });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["add_field", "bulk_add_fields", "change_field"] as const)(
     "restricts %s to the replica workspace before making a request",
     async (actionName) => {

@@ -98,6 +98,32 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
       const fields = readTableMetadataFields(table);
       return { table, fields };
     }
+    case "list_views": {
+      const tableId = readRequiredString(input.input.tableId, "tableId");
+      return {
+        views: requireArray(
+          await request({
+            path: "/reports/",
+            query: { application: tableId },
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "views",
+        ),
+      };
+    }
+    case "list_folders": {
+      const tableId = readRequiredString(input.input.tableId, "tableId");
+      return {
+        folders: requireArray(
+          await request({
+            path: "/folders/",
+            query: { application: tableId },
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "folders",
+        ),
+      };
+    }
     case "add_field": {
       requireReplicaWorkspace(workspaceId, "add_field");
       await request({
