@@ -122,6 +122,18 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     followUpActions: ["smartsuite.list_views"],
   }),
   defineProviderAction(service, {
+    name: "delete_view",
+    description: "Delete one SmartSuite View from the se4hznb4 replica only.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for deleting one SmartSuite replica View.", {
+      viewId: idSchema("The SmartSuite replica View ID to delete."),
+    }),
+    outputSchema: s.requiredObject("The SmartSuite replica View deletion response.", {
+      deleted: s.boolean("Whether the View was deleted."),
+    }),
+    followUpActions: ["smartsuite.list_views"],
+  }),
+  defineProviderAction(service, {
     name: "add_field",
     description: "Add one field to the se4hznb4 SmartSuite replica using SmartSuite's documented add-field endpoint.",
     requiredScopes: [],

@@ -148,6 +148,16 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         ),
       };
     }
+    case "delete_view": {
+      requireReplicaWorkspace(workspaceId, "delete_view");
+      const viewId = readRequiredString(input.input.viewId, "viewId");
+      await request({
+        path: `/reports/${encodeURIComponent(viewId)}/`,
+        method: "DELETE",
+        allowEmpty: true,
+      });
+      return { deleted: true };
+    }
     case "add_field": {
       requireReplicaWorkspace(workspaceId, "add_field");
       await request({

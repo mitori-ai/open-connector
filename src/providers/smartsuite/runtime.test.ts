@@ -132,7 +132,7 @@ describe("SmartSuite compatibility runtime", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["add_field", "bulk_add_fields", "change_field", "create_view"] as const)(
+  it.each(["add_field", "bulk_add_fields", "change_field", "create_view", "delete_view"] as const)(
     "restricts %s to the replica workspace before making a request",
     async (actionName) => {
       const fetchMock = vi.fn(async () => Response.json({}));
@@ -152,7 +152,9 @@ describe("SmartSuite compatibility runtime", () => {
                       solutionId: "solution-1",
                       view: { application: "table-1", solution: "solution-1" },
                     }
-                  : { tableId: "table-1", field: { slug: "field-1", label: "Field 1", field_type: "textfield" } },
+                  : actionName === "delete_view"
+                    ? { viewId: "view-1" }
+                    : { tableId: "table-1", field: { slug: "field-1", label: "Field 1", field_type: "textfield" } },
           },
           fetchMock as typeof fetch,
         ),
@@ -181,6 +183,23 @@ describe("SmartSuite compatibility runtime", () => {
         fetchMock as typeof fetch,
       ),
     ).resolves.toEqual({ view: { id: "view-1", ...view } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes a View only in the replica workspace", async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe("https://app.smartsuite.com/api/v1/reports/view-1/");
+      expect(init?.method).toBe("DELETE");
+      expect(init?.body).toBeUndefined();
+      return new Response(null, { status: 204 });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        { apiKey, values: { workspaceId: "se4hznb4" }, actionName: "delete_view", input: { viewId: "view-1" } },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ deleted: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
