@@ -158,6 +158,30 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
       });
       return { deleted: true };
     }
+    case "create_folder": {
+      requireReplicaWorkspace(workspaceId, "create_folder");
+      const tableId = readRequiredString(input.input.tableId, "tableId");
+      const solutionId = readRequiredString(input.input.solutionId, "solutionId");
+      const folder = requireInputObject(input.input.folder, "folder");
+      if (folder.application !== tableId || folder.solution !== solutionId) {
+        throw new ProviderRequestError(
+          400,
+          "SmartSuite create_folder application and solution must match the replica IDs.",
+        );
+      }
+      return {
+        folder: requireObject(
+          await request({
+            path: "/folders/",
+            method: "POST",
+            body: folder,
+            allowEmpty: false,
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "created folder",
+        ),
+      };
+    }
     case "add_field": {
       requireReplicaWorkspace(workspaceId, "add_field");
       await request({

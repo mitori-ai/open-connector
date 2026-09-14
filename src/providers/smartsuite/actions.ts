@@ -134,6 +134,20 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     followUpActions: ["smartsuite.list_views"],
   }),
   defineProviderAction(service, {
+    name: "create_folder",
+    description: "Create one SmartSuite View folder in the se4hznb4 replica only.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for creating one SmartSuite replica View folder.", {
+      tableId: idSchema("The SmartSuite replica Table ID where the folder will be created."),
+      solutionId: idSchema("The SmartSuite replica Solution ID containing the Table."),
+      folder: folderSchema,
+    }),
+    outputSchema: s.requiredObject("The created SmartSuite replica View folder.", {
+      folder: folderSchema,
+    }),
+    followUpActions: ["smartsuite.list_folders"],
+  }),
+  defineProviderAction(service, {
     name: "add_field",
     description: "Add one field to the se4hznb4 SmartSuite replica using SmartSuite's documented add-field endpoint.",
     requiredScopes: [],

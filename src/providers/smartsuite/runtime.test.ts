@@ -132,7 +132,7 @@ describe("SmartSuite compatibility runtime", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["add_field", "bulk_add_fields", "change_field", "create_view", "delete_view"] as const)(
+  it.each(["add_field", "bulk_add_fields", "change_field", "create_view", "delete_view", "create_folder"] as const)(
     "restricts %s to the replica workspace before making a request",
     async (actionName) => {
       const fetchMock = vi.fn(async () => Response.json({}));
@@ -154,7 +154,13 @@ describe("SmartSuite compatibility runtime", () => {
                     }
                   : actionName === "delete_view"
                     ? { viewId: "view-1" }
-                    : { tableId: "table-1", field: { slug: "field-1", label: "Field 1", field_type: "textfield" } },
+                    : actionName === "create_folder"
+                      ? {
+                          tableId: "table-1",
+                          solutionId: "solution-1",
+                          folder: { application: "table-1", solution: "solution-1" },
+                        }
+                      : { tableId: "table-1", field: { slug: "field-1", label: "Field 1", field_type: "textfield" } },
           },
           fetchMock as typeof fetch,
         ),
@@ -200,6 +206,29 @@ describe("SmartSuite compatibility runtime", () => {
         fetchMock as typeof fetch,
       ),
     ).resolves.toEqual({ deleted: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a folder only in the replica workspace", async () => {
+    const folder = { application: "table-1", solution: "solution-1", label: "Dallas Scheduling", order: 1 };
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe("https://app.smartsuite.com/api/v1/folders/");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual(folder);
+      return Response.json({ id: "folder-1", ...folder });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "create_folder",
+          input: { tableId: "table-1", solutionId: "solution-1", folder },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ folder: { id: "folder-1", ...folder } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
