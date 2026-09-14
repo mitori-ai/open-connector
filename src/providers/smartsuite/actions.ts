@@ -19,6 +19,18 @@ const tableSchema = s.looseObject("A SmartSuite Table returned by the API.", {
   name: s.string("The Table name."),
   solution: idSchema("The ID of the Solution containing the Table."),
 });
+const tableMetadataSchema = s.looseObject("A SmartSuite Table metadata object returned by the detail endpoint.", {
+  id: s.optional(idSchema("The Table ID.")),
+  name: s.optional(s.string("The Table name.")),
+  solution: s.optional(idSchema("The ID of the Solution containing the Table.")),
+});
+const tableMetadataFieldSchema = s.looseObject("A SmartSuite field metadata object.", {
+  id: s.optional(idSchema("The SmartSuite field ID, when returned.")),
+  slug: s.optional(s.string("The SmartSuite field slug, when returned.")),
+  label: s.optional(s.string("The SmartSuite field label, when returned.")),
+  field_type: s.optional(s.string("The SmartSuite field type, when returned.")),
+  params: s.optional(s.looseObject("SmartSuite field parameters, including choices and linked-field metadata.")),
+});
 
 const emptyInputSchema = s.object("No input is required.", {});
 const recordIdentityInputFields = {
@@ -50,6 +62,20 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     outputSchema: s.object("The accessible SmartSuite Tables.", {
       tables: s.array("The accessible Tables.", tableSchema),
     }),
+  }),
+  defineProviderAction(service, {
+    name: "get_table_metadata",
+    description:
+      "Get one SmartSuite Table's read-only metadata, including fields, select options, hidden flags, and linked-field metadata.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for reading SmartSuite Table metadata.", {
+      tableId: idSchema("The SmartSuite Table ID."),
+    }),
+    outputSchema: s.requiredObject("The SmartSuite Table metadata response.", {
+      table: tableMetadataSchema,
+      fields: s.array("Normalized field metadata extracted from the Table structure.", tableMetadataFieldSchema),
+    }),
+    followUpActions: ["smartsuite.list_records"],
   }),
   defineProviderAction(service, {
     name: "list_records",

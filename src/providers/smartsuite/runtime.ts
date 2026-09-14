@@ -17,6 +17,7 @@ interface ApiKeyProviderActionInput {
 export const smartsuiteApiBaseUrl = "https://app.smartsuite.com/api/v1";
 const smartsuiteRequestTimeoutMs = 30_000;
 const smartsuiteMaxResponseBytes = 1024 * 1024;
+const smartsuiteMetadataMaxResponseBytes = 20 * 1024 * 1024;
 
 interface SmartsuiteActionInput extends ApiKeyProviderActionInput {
   actionName: string;
@@ -32,6 +33,7 @@ interface SmartsuiteRequestInput {
   body?: Record<string, unknown>;
   phase: "validate" | "execute";
   allowEmpty?: boolean;
+  maxResponseBytes?: number;
 }
 
 type SmartsuiteRequest = (
@@ -82,6 +84,18 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
       return {
         tables: requireArray(await request({ path: "/applications/", query: { solution: solutionId } }), "tables"),
       };
+    }
+    case "get_table_metadata": {
+      const table = requireObject(
+        await request({
+          path: `/applications/${encodeURIComponent(readRequiredString(input.input.tableId, "tableId"))}/`,
+          method: "GET",
+          maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+        }),
+        "table metadata",
+      );
+      const fields = readTableMetadataFields(table);
+      return { table, fields };
     }
     case "list_records":
     case "search_records": {
@@ -290,7 +304,7 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
       signal: timeout.signal,
     });
-    const payload = await readPayload(response, input.allowEmpty === true);
+    const payload = await readPayload(response, input.allowEmpty === true, input.maxResponseBytes);
     if (!response.ok) {
       throw createSmartsuiteError(response, payload, input.phase, input.apiKey, input.workspaceId);
     }
@@ -318,8 +332,12 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
   }
 }
 
-async function readPayload(response: Response, allowEmpty: boolean) {
-  const text = await readProviderTextBody(response, "SmartSuite response", smartsuiteMaxResponseBytes);
+async function readPayload(response: Response, allowEmpty: boolean, maxResponseBytes?: number) {
+  const text = await readProviderTextBody(
+    response,
+    "SmartSuite response",
+    maxResponseBytes ?? smartsuiteMaxResponseBytes,
+  );
   if (text.trim() === "") {
     if (allowEmpty || !response.ok) return null;
     throw invalidPayload("response did not include JSON");
@@ -389,6 +407,24 @@ function requireObject(value: unknown, label: string) {
 function requireArray(value: unknown, label: string) {
   if (!Array.isArray(value)) throw invalidPayload(`${label} response was not an array`);
   return value;
+}
+
+function readTableMetadataFields(table: Record<string, unknown>): Record<string, unknown>[] {
+  for (const key of ["structure", "fields"]) {
+    const value = table[key];
+    if (Array.isArray(value)) {
+      return value.filter((item): item is Record<string, unknown> => optionalRecord(item) !== undefined);
+    }
+  }
+
+  const fieldsMetadata = optionalRecord(table.fields_metadata);
+  if (!fieldsMetadata) return [];
+
+  return Object.entries(fieldsMetadata).flatMap(([slug, value]) => {
+    const field = optionalRecord(value);
+    if (!field) return [];
+    return [{ ...field, slug: field.slug ?? slug }];
+  });
 }
 
 function readRequiredInteger(value: unknown, field: string) {

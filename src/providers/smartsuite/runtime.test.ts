@@ -7,6 +7,108 @@ const apiKey = "smartsuite-secret-api-key";
 const workspaceId = "workspace-secret-id";
 
 describe("SmartSuite compatibility runtime", () => {
+  it("reads complete table metadata with a GET and exposes normalized fields", async () => {
+    expect(smartsuiteActions.map((action) => action.name)).toContain("get_table_metadata");
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe("https://app.smartsuite.com/api/v1/applications/table-1/");
+      expect(init?.method).toBe("GET");
+      expect(init?.body).toBeUndefined();
+      return Response.json({
+        id: "table-1",
+        name: "Transportations",
+        solution: "solution-1",
+        structure: [
+          {
+            slug: "processing_facility",
+            label: "Processing Facility",
+            field_type: "singleselectfield",
+            params: { choices: [{ label: "Atlanta", value: "facility-1" }] },
+          },
+          {
+            slug: "link_to_shippers",
+            label: "Link to NTP Shippers",
+            field_type: "linkedrecordfield",
+            params: { linked_application: "shippers-table", linked_field_slug: "title" },
+          },
+        ],
+      });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId },
+          actionName: "get_table_metadata",
+          input: { tableId: "table-1" },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toMatchObject({
+      table: { id: "table-1", name: "Transportations" },
+      fields: [
+        {
+          slug: "processing_facility",
+          field_type: "singleselectfield",
+          params: { choices: [{ label: "Atlanta", value: "facility-1" }] },
+        },
+        {
+          slug: "link_to_shippers",
+          field_type: "linkedrecordfield",
+          params: { linked_application: "shippers-table", linked_field_slug: "title" },
+        },
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a bounded metadata response larger than the record response limit", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        id: "table-1",
+        structure: [{ slug: "large_field", label: "x".repeat(1024 * 1024 + 1) }],
+      }),
+    );
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId },
+          actionName: "get_table_metadata",
+          input: { tableId: "table-1" },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toMatchObject({ fields: [{ slug: "large_field" }] });
+  });
+
+  it("normalizes fields_metadata maps without mutating the table response", async () => {
+    const table = {
+      id: "table-1",
+      fields_metadata: {
+        status: { label: "Status", field_type: "statusfield" },
+      },
+    };
+    const fetchMock = vi.fn(async () => Response.json(table));
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId },
+          actionName: "get_table_metadata",
+          input: { tableId: "table-1" },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({
+      table,
+      fields: [{ slug: "status", label: "Status", field_type: "statusfield" }],
+    });
+    expect(table.fields_metadata.status).not.toHaveProperty("slug");
+  });
+
   it("keeps search_records and the all compatibility input", async () => {
     expect(smartsuiteActions.map((action) => action.name)).toContain("search_records");
     const fetchMock = vi.fn(async (_request: RequestInfo | URL, _init?: RequestInit) =>
