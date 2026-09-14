@@ -150,6 +150,19 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     followUpActions: ["smartsuite.list_views"],
   }),
   defineProviderAction(service, {
+    name: "update_view",
+    description: "Update one SmartSuite View in the se4hznb4 replica only.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for updating one SmartSuite replica View.", {
+      viewId: idSchema("The SmartSuite replica View ID to update."),
+      view: viewDefinitionSchema,
+    }),
+    outputSchema: s.requiredObject("The updated SmartSuite replica View.", {
+      view: viewSchema,
+    }),
+    followUpActions: ["smartsuite.list_views"],
+  }),
+  defineProviderAction(service, {
     name: "delete_view",
     description: "Delete one SmartSuite View from the se4hznb4 replica only.",
     requiredScopes: [],

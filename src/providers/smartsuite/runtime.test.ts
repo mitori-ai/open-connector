@@ -181,6 +181,7 @@ describe("SmartSuite compatibility runtime", () => {
     "bulk_add_fields",
     "change_field",
     "create_view",
+    "update_view",
     "delete_view",
     "create_folder",
     "create_dashboard_widget",
@@ -204,23 +205,28 @@ describe("SmartSuite compatibility runtime", () => {
                     solutionId: "solution-1",
                     view: { application: "table-1", solution: "solution-1" },
                   }
-                : actionName === "delete_view"
-                  ? { viewId: "view-1" }
-                  : actionName === "create_folder"
-                    ? {
-                        tableId: "table-1",
-                        solutionId: "solution-1",
-                        folder: { application: "table-1", solution: "solution-1" },
-                      }
-                    : actionName === "create_dashboard_widget" || actionName === "update_dashboard_widget"
+                : actionName === "update_view"
+                  ? { viewId: "view-1", view: { application: "table-1", solution: "solution-1" } }
+                  : actionName === "delete_view"
+                    ? { viewId: "view-1" }
+                    : actionName === "create_folder"
                       ? {
-                          reportId: "report-1",
-                          ...(actionName === "update_dashboard_widget" ? { widgetId: "widget-1" } : {}),
-                          widget: { report: "report-1" },
+                          tableId: "table-1",
+                          solutionId: "solution-1",
+                          folder: { application: "table-1", solution: "solution-1" },
                         }
-                      : actionName === "delete_dashboard_widget"
-                        ? { widgetId: "widget-1" }
-                        : { tableId: "table-1", field: { slug: "field-1", label: "Field 1", field_type: "textfield" } },
+                      : actionName === "create_dashboard_widget" || actionName === "update_dashboard_widget"
+                        ? {
+                            reportId: "report-1",
+                            ...(actionName === "update_dashboard_widget" ? { widgetId: "widget-1" } : {}),
+                            widget: { report: "report-1" },
+                          }
+                        : actionName === "delete_dashboard_widget"
+                          ? { widgetId: "widget-1" }
+                          : {
+                              tableId: "table-1",
+                              field: { slug: "field-1", label: "Field 1", field_type: "textfield" },
+                            },
         },
         fetchMock as typeof fetch,
       ),
@@ -265,6 +271,30 @@ describe("SmartSuite compatibility runtime", () => {
         fetchMock as typeof fetch,
       ),
     ).resolves.toEqual({ deleted: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates a View only in the replica workspace", async () => {
+    const view = {
+      application: "table-1",
+      solution: "solution-1",
+      state: { fieldsWindow: { visibleFields: ["title"] } },
+    };
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe(
+        "https://app.smartsuite.com/api/v1/reports/view-1/?return_data=true",
+      );
+      expect(init?.method).toBe("PATCH");
+      expect(JSON.parse(String(init?.body))).toEqual(view);
+      return Response.json({ id: "view-1", ...view });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        { apiKey, values: { workspaceId: "se4hznb4" }, actionName: "update_view", input: { viewId: "view-1", view } },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ view: { id: "view-1", ...view } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

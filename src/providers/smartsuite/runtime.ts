@@ -174,6 +174,22 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         ),
       };
     }
+    case "update_view": {
+      requireReplicaWorkspace(workspaceId, "update_view");
+      const viewId = readRequiredString(input.input.viewId, "viewId");
+      return {
+        view: requireObject(
+          await request({
+            path: `/reports/${encodeURIComponent(viewId)}/?return_data=true`,
+            method: "PATCH",
+            body: requireInputObject(input.input.view, "view"),
+            allowEmpty: false,
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "updated view",
+        ),
+      };
+    }
     case "delete_view": {
       requireReplicaWorkspace(workspaceId, "delete_view");
       const viewId = readRequiredString(input.input.viewId, "viewId");
