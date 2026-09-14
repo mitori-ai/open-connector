@@ -111,6 +111,19 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         ),
       };
     }
+    case "get_view": {
+      const viewId = readRequiredString(input.input.viewId, "viewId");
+      return {
+        view: requireObject(
+          await request({
+            path: `/reports/${encodeURIComponent(viewId)}/`,
+            method: "GET",
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "view",
+        ),
+      };
+    }
     case "list_folders": {
       const tableId = readRequiredString(input.input.tableId, "tableId");
       return {

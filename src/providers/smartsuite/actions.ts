@@ -97,6 +97,17 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     }),
   }),
   defineProviderAction(service, {
+    name: "get_view",
+    description: "Get one saved SmartSuite View/report with its complete read-only state.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for reading one saved SmartSuite View.", {
+      viewId: idSchema("The SmartSuite View ID."),
+    }),
+    outputSchema: s.requiredObject("The saved SmartSuite View/report.", {
+      view: viewSchema,
+    }),
+  }),
+  defineProviderAction(service, {
     name: "list_folders",
     description: "List SmartSuite View folders for one Table. Read-only.",
     requiredScopes: [],

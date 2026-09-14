@@ -132,6 +132,24 @@ describe("SmartSuite compatibility runtime", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("reads one saved View with a GET and no request body", async () => {
+    const view = { id: "view-1", label: "Shipper Inventory", view_mode: "dashboard", document: { type: "dashboard" } };
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe("https://app.smartsuite.com/api/v1/reports/view-1/");
+      expect(init?.method).toBe("GET");
+      expect(init?.body).toBeUndefined();
+      return Response.json(view);
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        { apiKey, values: { workspaceId }, actionName: "get_view", input: { viewId: "view-1" } },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ view });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["add_field", "bulk_add_fields", "change_field", "create_view", "delete_view", "create_folder"] as const)(
     "restricts %s to the replica workspace before making a request",
     async (actionName) => {
