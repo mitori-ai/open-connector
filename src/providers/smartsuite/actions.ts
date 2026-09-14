@@ -35,6 +35,7 @@ const viewSchema = s.looseObject(
   "A saved SmartSuite View/report, including its state, returned by the reports collection.",
 );
 const folderSchema = s.looseObject("A SmartSuite View folder returned by the folders collection.");
+const viewDefinitionSchema = s.looseObject("A SmartSuite View definition for a replica-side creation.");
 const smartSuiteFieldDefinitionSchema = s.looseObject("A SmartSuite field definition for replica metadata changes.");
 const smartSuiteFieldPositionSchema = s.looseObject("Optional SmartSuite field placement metadata.");
 
@@ -105,6 +106,20 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     outputSchema: s.requiredObject("The SmartSuite View folders for the Table.", {
       folders: s.array("SmartSuite View folders.", folderSchema),
     }),
+  }),
+  defineProviderAction(service, {
+    name: "create_view",
+    description: "Create one SmartSuite View in the se4hznb4 replica using SmartSuite's documented reports endpoint.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for creating one SmartSuite replica View.", {
+      tableId: idSchema("The SmartSuite replica Table ID where the View will be created."),
+      solutionId: idSchema("The SmartSuite replica Solution ID containing the Table."),
+      view: viewDefinitionSchema,
+    }),
+    outputSchema: s.requiredObject("The created SmartSuite replica View.", {
+      view: viewSchema,
+    }),
+    followUpActions: ["smartsuite.list_views"],
   }),
   defineProviderAction(service, {
     name: "add_field",

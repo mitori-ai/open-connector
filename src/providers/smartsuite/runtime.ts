@@ -124,6 +124,30 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         ),
       };
     }
+    case "create_view": {
+      requireReplicaWorkspace(workspaceId, "create_view");
+      const tableId = readRequiredString(input.input.tableId, "tableId");
+      const solutionId = readRequiredString(input.input.solutionId, "solutionId");
+      const view = requireInputObject(input.input.view, "view");
+      if (view.application !== tableId || view.solution !== solutionId) {
+        throw new ProviderRequestError(
+          400,
+          "SmartSuite create_view application and solution must match the replica IDs.",
+        );
+      }
+      return {
+        view: requireObject(
+          await request({
+            path: "/reports/",
+            method: "POST",
+            body: view,
+            allowEmpty: false,
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "created view",
+        ),
+      };
+    }
     case "add_field": {
       requireReplicaWorkspace(workspaceId, "add_field");
       await request({
