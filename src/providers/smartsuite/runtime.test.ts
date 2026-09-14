@@ -150,42 +150,83 @@ describe("SmartSuite compatibility runtime", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["add_field", "bulk_add_fields", "change_field", "create_view", "delete_view", "create_folder"] as const)(
-    "restricts %s to the replica workspace before making a request",
-    async (actionName) => {
-      const fetchMock = vi.fn(async () => Response.json({}));
+  it("reads Dashboard widgets with a GET and no request body", async () => {
+    const widgets = [{ id: "widget-1", widget_type: "grid", report: "report-1" }];
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(request));
+      expect(url.pathname).toBe("/api/v1/dashboard/widgets/");
+      expect(url.searchParams.get("report")).toBe("report-1");
+      expect(url.searchParams.get("tab")).toBe("tab-1");
+      expect(init?.method).toBe("GET");
+      expect(init?.body).toBeUndefined();
+      return Response.json(widgets);
+    });
 
-      await expect(
-        executeSmartsuiteAction(
-          {
-            apiKey,
-            values: { workspaceId: "sgidtdqr" },
-            actionName,
-            input:
-              actionName === "bulk_add_fields"
-                ? { tableId: "table-1", fields: [{ slug: "field-1" }] }
-                : actionName === "create_view"
-                  ? {
-                      tableId: "table-1",
-                      solutionId: "solution-1",
-                      view: { application: "table-1", solution: "solution-1" },
-                    }
-                  : actionName === "delete_view"
-                    ? { viewId: "view-1" }
-                    : actionName === "create_folder"
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId },
+          actionName: "list_dashboard_widgets",
+          input: { reportId: "report-1", tabId: "tab-1" },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ widgets });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    "add_field",
+    "bulk_add_fields",
+    "change_field",
+    "create_view",
+    "delete_view",
+    "create_folder",
+    "create_dashboard_widget",
+    "update_dashboard_widget",
+    "delete_dashboard_widget",
+  ] as const)("restricts %s to the replica workspace before making a request", async (actionName) => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "sgidtdqr" },
+          actionName,
+          input:
+            actionName === "bulk_add_fields"
+              ? { tableId: "table-1", fields: [{ slug: "field-1" }] }
+              : actionName === "create_view"
+                ? {
+                    tableId: "table-1",
+                    solutionId: "solution-1",
+                    view: { application: "table-1", solution: "solution-1" },
+                  }
+                : actionName === "delete_view"
+                  ? { viewId: "view-1" }
+                  : actionName === "create_folder"
+                    ? {
+                        tableId: "table-1",
+                        solutionId: "solution-1",
+                        folder: { application: "table-1", solution: "solution-1" },
+                      }
+                    : actionName === "create_dashboard_widget" || actionName === "update_dashboard_widget"
                       ? {
-                          tableId: "table-1",
-                          solutionId: "solution-1",
-                          folder: { application: "table-1", solution: "solution-1" },
+                          reportId: "report-1",
+                          ...(actionName === "update_dashboard_widget" ? { widgetId: "widget-1" } : {}),
+                          widget: { report: "report-1" },
                         }
-                      : { tableId: "table-1", field: { slug: "field-1", label: "Field 1", field_type: "textfield" } },
-          },
-          fetchMock as typeof fetch,
-        ),
-      ).rejects.toThrow(/restricted to replica workspace se4hznb4/u);
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
+                      : actionName === "delete_dashboard_widget"
+                        ? { widgetId: "widget-1" }
+                        : { tableId: "table-1", field: { slug: "field-1", label: "Field 1", field_type: "textfield" } },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).rejects.toThrow(/restricted to replica workspace se4hznb4/u);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   it("creates a View only in the replica workspace", async () => {
     const view = { application: "table-1", solution: "solution-1", label: "Dallas Scheduling", view_mode: "calendar" };
@@ -248,6 +289,63 @@ describe("SmartSuite compatibility runtime", () => {
       ),
     ).resolves.toEqual({ folder: { id: "folder-1", ...folder } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates, updates, and deletes Dashboard widgets only in the replica workspace", async () => {
+    const widget = { report: "report-1", widget_type: "grid" };
+    const requests: Array<{ url: string; method: string | undefined; body: string | undefined }> = [];
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(request), method: init?.method, body: init?.body?.toString() });
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      return Response.json({ id: "widget-1", ...widget });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "create_dashboard_widget",
+          input: { reportId: "report-1", widget },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ widget: { id: "widget-1", ...widget } });
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "update_dashboard_widget",
+          input: { reportId: "report-1", widgetId: "widget-1", widget },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ widget: { id: "widget-1", ...widget } });
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "delete_dashboard_widget",
+          input: { widgetId: "widget-1" },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ deleted: true });
+    expect(requests).toEqual([
+      { url: "https://app.smartsuite.com/api/v1/dashboard/widgets/", method: "POST", body: JSON.stringify(widget) },
+      {
+        url: "https://app.smartsuite.com/api/v1/dashboard/widgets/widget-1/",
+        method: "PATCH",
+        body: JSON.stringify(widget),
+      },
+      {
+        url: "https://app.smartsuite.com/api/v1/dashboard/widgets/widget-1/",
+        method: "DELETE",
+        body: undefined,
+      },
+    ]);
   });
 
   it("uses the documented replica field mutation methods and paths", async () => {

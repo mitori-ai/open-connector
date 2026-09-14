@@ -124,6 +124,19 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         ),
       };
     }
+    case "list_dashboard_widgets": {
+      const reportId = readRequiredString(input.input.reportId, "reportId");
+      return {
+        widgets: requireArray(
+          await request({
+            path: "/dashboard/widgets/",
+            query: { report: reportId, tab: optionalString(input.input.tabId) },
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "dashboard widgets",
+        ),
+      };
+    }
     case "list_folders": {
       const tableId = readRequiredString(input.input.tableId, "tableId");
       return {
@@ -194,6 +207,53 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
           "created folder",
         ),
       };
+    }
+    case "create_dashboard_widget": {
+      requireReplicaWorkspace(workspaceId, "create_dashboard_widget");
+      const reportId = readRequiredString(input.input.reportId, "reportId");
+      const widget = requireInputObject(input.input.widget, "widget");
+      assertWidgetReport(widget, reportId);
+      return {
+        widget: requireObject(
+          await request({
+            path: "/dashboard/widgets/",
+            method: "POST",
+            body: widget,
+            allowEmpty: false,
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "created dashboard widget",
+        ),
+      };
+    }
+    case "update_dashboard_widget": {
+      requireReplicaWorkspace(workspaceId, "update_dashboard_widget");
+      const reportId = readRequiredString(input.input.reportId, "reportId");
+      const widgetId = readRequiredString(input.input.widgetId, "widgetId");
+      const widget = requireInputObject(input.input.widget, "widget");
+      assertWidgetReport(widget, reportId);
+      return {
+        widget: requireObject(
+          await request({
+            path: `/dashboard/widgets/${encodeURIComponent(widgetId)}/`,
+            method: "PATCH",
+            body: widget,
+            allowEmpty: false,
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "updated dashboard widget",
+        ),
+      };
+    }
+    case "delete_dashboard_widget": {
+      requireReplicaWorkspace(workspaceId, "delete_dashboard_widget");
+      const widgetId = readRequiredString(input.input.widgetId, "widgetId");
+      await request({
+        path: `/dashboard/widgets/${encodeURIComponent(widgetId)}/`,
+        method: "DELETE",
+        allowEmpty: true,
+      });
+      return { deleted: true };
     }
     case "add_field": {
       requireReplicaWorkspace(workspaceId, "add_field");
@@ -522,6 +582,14 @@ function requireReplicaWorkspace(workspaceId: string, actionName: string): void 
       403,
       `SmartSuite ${actionName} is restricted to replica workspace ${smartsuiteReplicaWorkspaceId}`,
     );
+  }
+}
+
+function assertWidgetReport(widget: Record<string, unknown>, reportId: string): void {
+  const widgetReport =
+    optionalString(widget.report) ?? optionalString(widget.report_id) ?? optionalString(widget.reportId);
+  if (widgetReport && widgetReport !== reportId) {
+    throw new ProviderRequestError(400, "SmartSuite widget report must match reportId.");
   }
 }
 

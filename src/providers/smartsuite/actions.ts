@@ -36,6 +36,7 @@ const viewSchema = s.looseObject(
 );
 const folderSchema = s.looseObject("A SmartSuite View folder returned by the folders collection.");
 const viewDefinitionSchema = s.looseObject("A SmartSuite View definition for a replica-side creation.");
+const widgetSchema = s.looseObject("A SmartSuite Dashboard widget definition.");
 const smartSuiteFieldDefinitionSchema = s.looseObject("A SmartSuite field definition for replica metadata changes.");
 const smartSuiteFieldPositionSchema = s.looseObject("Optional SmartSuite field placement metadata.");
 
@@ -108,6 +109,22 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     }),
   }),
   defineProviderAction(service, {
+    name: "list_dashboard_widgets",
+    description: "List SmartSuite Dashboard widgets for one saved View and optional tab. Read-only.",
+    requiredScopes: [],
+    inputSchema: s.object(
+      "The input payload for listing Dashboard widgets.",
+      {
+        reportId: idSchema("The SmartSuite Dashboard View ID."),
+        tabId: idSchema("Optional SmartSuite Dashboard tab ID."),
+      },
+      { optional: ["tabId"] },
+    ),
+    outputSchema: s.requiredObject("The Dashboard widgets for the View.", {
+      widgets: s.array("SmartSuite Dashboard widgets.", widgetSchema),
+    }),
+  }),
+  defineProviderAction(service, {
     name: "list_folders",
     description: "List SmartSuite View folders for one Table. Read-only.",
     requiredScopes: [],
@@ -157,6 +174,45 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
       folder: folderSchema,
     }),
     followUpActions: ["smartsuite.list_folders"],
+  }),
+  defineProviderAction(service, {
+    name: "create_dashboard_widget",
+    description: "Create one SmartSuite Dashboard widget in the se4hznb4 replica only.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for creating one replica Dashboard widget.", {
+      reportId: idSchema("The SmartSuite replica Dashboard View ID."),
+      widget: widgetSchema,
+    }),
+    outputSchema: s.requiredObject("The created replica Dashboard widget.", {
+      widget: widgetSchema,
+    }),
+    followUpActions: ["smartsuite.list_dashboard_widgets"],
+  }),
+  defineProviderAction(service, {
+    name: "update_dashboard_widget",
+    description: "Update one SmartSuite Dashboard widget in the se4hznb4 replica only.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for updating one replica Dashboard widget.", {
+      reportId: idSchema("The SmartSuite replica Dashboard View ID."),
+      widgetId: idSchema("The SmartSuite replica Dashboard widget ID."),
+      widget: widgetSchema,
+    }),
+    outputSchema: s.requiredObject("The updated replica Dashboard widget.", {
+      widget: widgetSchema,
+    }),
+    followUpActions: ["smartsuite.list_dashboard_widgets"],
+  }),
+  defineProviderAction(service, {
+    name: "delete_dashboard_widget",
+    description: "Delete one SmartSuite Dashboard widget from the se4hznb4 replica only.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("The input payload for deleting one replica Dashboard widget.", {
+      widgetId: idSchema("The SmartSuite replica Dashboard widget ID to delete."),
+    }),
+    outputSchema: s.requiredObject("The replica Dashboard widget deletion response.", {
+      deleted: s.boolean("Whether the Dashboard widget was deleted."),
+    }),
+    followUpActions: ["smartsuite.list_dashboard_widgets"],
   }),
   defineProviderAction(service, {
     name: "add_field",
