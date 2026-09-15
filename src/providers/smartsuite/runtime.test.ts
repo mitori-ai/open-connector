@@ -7,12 +7,77 @@ const apiKey = "smartsuite-secret-api-key";
 const workspaceId = "workspace-secret-id";
 
 describe("SmartSuite compatibility runtime", () => {
-  it("does not expose SmartSuite record write actions", () => {
+  it("exposes only the temporary replica create/update record actions", () => {
     const actionNames = smartsuiteActions.map((action) => action.name);
 
-    expect(actionNames).not.toContain("create_record");
-    expect(actionNames).not.toContain("update_record");
+    expect(actionNames).toContain("create_record");
+    expect(actionNames).toContain("update_record");
     expect(actionNames).not.toContain("delete_record");
+  });
+
+  it.each(["create_record", "update_record"])(
+    "%s rejects a non-replica workspace before making a provider request",
+    async (actionName) => {
+      const fetchMock = vi.fn();
+      const input =
+        actionName === "create_record"
+          ? { tableId: "table-1", fields: { status: true } }
+          : { tableId: "table-1", recordId: "record-1", fields: { status: true } };
+
+      await expect(
+        executeSmartsuiteAction(
+          { apiKey, values: { workspaceId: "not-the-replica" }, actionName, input },
+          fetchMock as typeof fetch,
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("creates a replica record with a POST request", async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe(
+        "https://app.smartsuite.com/api/v1/applications/table-1/records/",
+      );
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ status: true });
+      return Response.json({ id: "record-1", status: true });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "create_record",
+          input: { tableId: "table-1", fields: { status: true } },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ record: { id: "record-1", status: true } });
+  });
+
+  it("updates a replica record with a PATCH request", async () => {
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe(
+        "https://app.smartsuite.com/api/v1/applications/table-1/records/record-1/",
+      );
+      expect(init?.method).toBe("PATCH");
+      expect(JSON.parse(String(init?.body))).toEqual({ status: true });
+      return Response.json({ id: "record-1", status: true });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "update_record",
+          input: { tableId: "table-1", recordId: "record-1", fields: { status: true } },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ record: { id: "record-1", status: true } });
   });
 
   it("reads complete table metadata with a GET and exposes normalized fields", async () => {

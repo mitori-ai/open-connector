@@ -214,4 +214,31 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
       record: dynamicRecordSchema,
     }),
   }),
+  defineProviderAction(service, {
+    name: "create_record",
+    description:
+      "Temporarily create a record in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
+    requiredScopes: [],
+    inputSchema: s.object("Defines the SmartSuite replica record to create.", {
+      tableId: recordIdentityInputFields.tableId,
+      fields: dynamicObjectSchema("Record values keyed by SmartSuite Table field slug."),
+    }),
+    outputSchema: s.object("The created SmartSuite replica record.", {
+      record: dynamicRecordSchema,
+    }),
+  }),
+  defineProviderAction(service, {
+    name: "update_record",
+    description:
+      "Temporarily update fields on a record in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
+    requiredScopes: [],
+    inputSchema: s.object("Defines the SmartSuite replica record fields to update.", {
+      ...recordIdentityInputFields,
+      fields: dynamicObjectSchema("Record values keyed by SmartSuite Table field slug."),
+    }),
+    outputSchema: s.object("The updated SmartSuite replica record.", {
+      record: dynamicRecordSchema,
+    }),
+    followUpActions: ["smartsuite.get_record"],
+  }),
 ];

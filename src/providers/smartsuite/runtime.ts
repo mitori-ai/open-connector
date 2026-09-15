@@ -18,6 +18,7 @@ export const smartsuiteApiBaseUrl = "https://app.smartsuite.com/api/v1";
 const smartsuiteRequestTimeoutMs = 30_000;
 const smartsuiteMaxResponseBytes = 1024 * 1024;
 const smartsuiteMetadataMaxResponseBytes = 20 * 1024 * 1024;
+const smartsuiteReplicaWorkspaceId = "se4hznb4";
 
 interface SmartsuiteActionInput extends ApiKeyProviderActionInput {
   actionName: string;
@@ -197,6 +198,36 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
             },
           }),
           "record",
+        ),
+      };
+    }
+    case "create_record": {
+      requireReplicaWorkspace(workspaceId, "create_record");
+      const tableId = readRequiredString(input.input.tableId, "tableId");
+      return {
+        record: requireObject(
+          await request({
+            path: `/applications/${encodeURIComponent(tableId)}/records/`,
+            method: "POST",
+            body: requireInputObject(input.input.fields, "fields"),
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "created record",
+        ),
+      };
+    }
+    case "update_record": {
+      requireReplicaWorkspace(workspaceId, "update_record");
+      const { tableId, recordId } = readRecordIdentity(input.input);
+      return {
+        record: requireObject(
+          await request({
+            path: `/applications/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}/`,
+            method: "PATCH",
+            body: requireInputObject(input.input.fields, "fields"),
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "updated record",
         ),
       };
     }
@@ -413,6 +444,21 @@ function readRecordIdentity(input: Record<string, unknown>) {
     tableId: readRequiredString(input.tableId, "tableId"),
     recordId: readRequiredString(input.recordId, "recordId"),
   };
+}
+
+function requireInputObject(value: unknown, field: string) {
+  const object = optionalRecord(value);
+  if (!object) throw new ProviderRequestError(400, `SmartSuite requires ${field} object`);
+  return object;
+}
+
+function requireReplicaWorkspace(workspaceId: string, actionName: string): void {
+  if (workspaceId !== smartsuiteReplicaWorkspaceId) {
+    throw new ProviderRequestError(
+      403,
+      `SmartSuite ${actionName} is restricted to replica workspace ${smartsuiteReplicaWorkspaceId}`,
+    );
+  }
 }
 
 function requireObject(value: unknown, label: string) {
