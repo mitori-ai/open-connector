@@ -36,9 +36,6 @@ const viewSchema = s.looseObject(
 );
 const folderSchema = s.looseObject("A SmartSuite View folder returned by the folders collection.");
 const widgetSchema = s.looseObject("A SmartSuite Dashboard widget definition.");
-const smartSuiteFieldDefinitionSchema = s.looseObject(
-  "A SmartSuite field definition for a replica-only schema update.",
-);
 
 const emptyInputSchema = s.object("No input is required.", {});
 const recordIdentityInputFields = {
@@ -216,63 +213,5 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     outputSchema: s.object("The requested SmartSuite record.", {
       record: dynamicRecordSchema,
     }),
-  }),
-  defineProviderAction(service, {
-    name: "create_record",
-    description:
-      "Temporarily create a record in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
-    requiredScopes: [],
-    inputSchema: s.object("Defines the SmartSuite replica record to create.", {
-      tableId: recordIdentityInputFields.tableId,
-      fields: dynamicObjectSchema("Record values keyed by SmartSuite Table field slug."),
-    }),
-    outputSchema: s.object("The created SmartSuite replica record.", {
-      record: dynamicRecordSchema,
-    }),
-  }),
-  defineProviderAction(service, {
-    name: "bulk_create_records",
-    description:
-      "Temporarily create up to 25 records in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
-    requiredScopes: [],
-    inputSchema: s.requiredObject("Defines the SmartSuite replica records to create.", {
-      tableId: recordIdentityInputFields.tableId,
-      records: s.array(
-        "Record values keyed by SmartSuite Table field slug.",
-        dynamicObjectSchema("A SmartSuite replica record to create."),
-        { minItems: 1, maxItems: 25 },
-      ),
-    }),
-    outputSchema: s.requiredObject("The created SmartSuite replica records.", {
-      records: s.array("The created records.", dynamicRecordSchema),
-    }),
-  }),
-  defineProviderAction(service, {
-    name: "change_field",
-    description:
-      "Temporarily update one field definition in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
-    requiredScopes: [],
-    inputSchema: s.requiredObject("Defines the SmartSuite replica field definition to update.", {
-      tableId: idSchema("The SmartSuite replica Table ID."),
-      field: smartSuiteFieldDefinitionSchema,
-    }),
-    outputSchema: s.requiredObject("The SmartSuite replica field update response.", {
-      applied: s.boolean("Whether SmartSuite accepted the field update."),
-    }),
-    followUpActions: ["smartsuite.get_table_metadata"],
-  }),
-  defineProviderAction(service, {
-    name: "update_record",
-    description:
-      "Temporarily update fields on a record in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
-    requiredScopes: [],
-    inputSchema: s.object("Defines the SmartSuite replica record fields to update.", {
-      ...recordIdentityInputFields,
-      fields: dynamicObjectSchema("Record values keyed by SmartSuite Table field slug."),
-    }),
-    outputSchema: s.object("The updated SmartSuite replica record.", {
-      record: dynamicRecordSchema,
-    }),
-    followUpActions: ["smartsuite.get_record"],
   }),
 ];
