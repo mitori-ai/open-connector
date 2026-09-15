@@ -7,16 +7,17 @@ const apiKey = "smartsuite-secret-api-key";
 const workspaceId = "workspace-secret-id";
 
 describe("SmartSuite compatibility runtime", () => {
-  it("exposes only temporary replica create/update/bulk-create record actions", () => {
+  it("exposes only temporary replica migration actions and no delete action", () => {
     const actionNames = smartsuiteActions.map((action) => action.name);
 
     expect(actionNames).toContain("create_record");
     expect(actionNames).toContain("bulk_create_records");
+    expect(actionNames).toContain("change_field");
     expect(actionNames).toContain("update_record");
     expect(actionNames).not.toContain("delete_record");
   });
 
-  it.each(["create_record", "bulk_create_records", "update_record"])(
+  it.each(["create_record", "bulk_create_records", "change_field", "update_record"])(
     "%s rejects a non-replica workspace before making a provider request",
     async (actionName) => {
       const fetchMock = vi.fn();
@@ -25,7 +26,9 @@ describe("SmartSuite compatibility runtime", () => {
           ? { tableId: "table-1", fields: { status: true } }
           : actionName === "bulk_create_records"
             ? { tableId: "table-1", records: [{ status: true }] }
-            : { tableId: "table-1", recordId: "record-1", fields: { status: true } };
+            : actionName === "change_field"
+              ? { tableId: "table-1", field: { slug: "status", label: "Status", field_type: "yesnofield", params: {} } }
+              : { tableId: "table-1", recordId: "record-1", fields: { status: true } };
 
       await expect(
         executeSmartsuiteAction(
@@ -104,6 +107,30 @@ describe("SmartSuite compatibility runtime", () => {
         fetchMock as typeof fetch,
       ),
     ).resolves.toEqual({ records: [{ id: "record-1", status: true }] });
+  });
+
+  it("changes a replica field with a PUT request", async () => {
+    const field = { slug: "status", label: "Status", field_type: "yesnofield", params: { required: false } };
+    const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      expect(new URL(String(request)).toString()).toBe(
+        "https://app.smartsuite.com/api/v1/applications/table-1/change_field/",
+      );
+      expect(init?.method).toBe("PUT");
+      expect(JSON.parse(String(init?.body))).toEqual(field);
+      return new Response(null, { status: 204 });
+    });
+
+    await expect(
+      executeSmartsuiteAction(
+        {
+          apiKey,
+          values: { workspaceId: "se4hznb4" },
+          actionName: "change_field",
+          input: { tableId: "table-1", field },
+        },
+        fetchMock as typeof fetch,
+      ),
+    ).resolves.toEqual({ applied: true });
   });
 
   it("reads complete table metadata with a GET and exposes normalized fields", async () => {

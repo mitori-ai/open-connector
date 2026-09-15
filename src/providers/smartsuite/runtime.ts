@@ -235,6 +235,18 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         ),
       };
     }
+    case "change_field": {
+      requireReplicaWorkspace(workspaceId, "change_field");
+      const tableId = readRequiredString(input.input.tableId, "tableId");
+      await request({
+        path: `/applications/${encodeURIComponent(tableId)}/change_field/`,
+        method: "PUT",
+        body: requireInputObject(input.input.field, "field"),
+        allowEmpty: true,
+        maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+      });
+      return { applied: true };
+    }
     case "update_record": {
       requireReplicaWorkspace(workspaceId, "update_record");
       const { tableId, recordId } = readRecordIdentity(input.input);

@@ -36,6 +36,9 @@ const viewSchema = s.looseObject(
 );
 const folderSchema = s.looseObject("A SmartSuite View folder returned by the folders collection.");
 const widgetSchema = s.looseObject("A SmartSuite Dashboard widget definition.");
+const smartSuiteFieldDefinitionSchema = s.looseObject(
+  "A SmartSuite field definition for a replica-only schema update.",
+);
 
 const emptyInputSchema = s.object("No input is required.", {});
 const recordIdentityInputFields = {
@@ -243,6 +246,20 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     outputSchema: s.requiredObject("The created SmartSuite replica records.", {
       records: s.array("The created records.", dynamicRecordSchema),
     }),
+  }),
+  defineProviderAction(service, {
+    name: "change_field",
+    description:
+      "Temporarily update one field definition in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("Defines the SmartSuite replica field definition to update.", {
+      tableId: idSchema("The SmartSuite replica Table ID."),
+      field: smartSuiteFieldDefinitionSchema,
+    }),
+    outputSchema: s.requiredObject("The SmartSuite replica field update response.", {
+      applied: s.boolean("Whether SmartSuite accepted the field update."),
+    }),
+    followUpActions: ["smartsuite.get_table_metadata"],
   }),
   defineProviderAction(service, {
     name: "update_record",
