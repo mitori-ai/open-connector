@@ -163,6 +163,7 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
             all: stringifyOptionalBoolean(
               optionalBoolean(input.input.includeDeleted) ?? optionalBoolean(input.input.all),
             ),
+            fields: readOptionalStringArray(input.input.fields),
           }),
           body: jsonObject({
             hydrated,
@@ -305,7 +306,12 @@ function readMemberDisplayName(value: Record<string, unknown> | undefined): stri
 async function requestSmartsuite(input: SmartsuiteRequestInput) {
   const url = new URL(`${smartsuiteApiBaseUrl}${input.path}`);
   for (const [key, value] of Object.entries(input.query ?? {})) {
-    if (value !== undefined) url.searchParams.set(key, String(value));
+    if (Array.isArray(value)) {
+      url.searchParams.delete(key);
+      for (const item of value) url.searchParams.append(key, String(item));
+    } else if (value !== undefined) {
+      url.searchParams.set(key, String(value));
+    }
   }
   const timeout = createProviderTimeout(undefined, smartsuiteRequestTimeoutMs);
   try {
@@ -450,6 +456,14 @@ function stringifyOptionalInteger(value: number | undefined) {
 
 function stringifyOptionalBoolean(value: boolean | undefined) {
   return value === undefined ? undefined : String(value);
+}
+
+function readOptionalStringArray(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
+    throw new ProviderRequestError(400, "SmartSuite fields must be a non-empty string array");
+  }
+  return value.map((item) => item.trim());
 }
 
 function invalidPayload(message: string) {

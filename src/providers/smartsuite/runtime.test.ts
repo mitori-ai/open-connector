@@ -202,6 +202,7 @@ describe("SmartSuite compatibility runtime", () => {
             offset: 10,
             limit: 25,
             all: true,
+            fields: ["title", "status"],
             filter: { operator: "and", fields: [] },
           },
         },
@@ -211,6 +212,7 @@ describe("SmartSuite compatibility runtime", () => {
 
     const [request, init] = fetchMock.mock.calls[0]!;
     expect(new URL(String(request)).searchParams.get("all")).toBe("true");
+    expect(new URL(String(request)).searchParams.getAll("fields")).toEqual(["title", "status"]);
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toMatchObject({ filter: { operator: "and", fields: [] } });
   });

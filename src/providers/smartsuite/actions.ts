@@ -145,13 +145,17 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
         includeDeleted: s.boolean("Whether to include records marked as deleted."),
         all: s.boolean("Compatibility alias for includeDeleted."),
         hydrated: s.boolean("Whether to include human-readable labels for supported field types."),
+        fields: s.array(
+          "Optional field slugs to project into the read-only record response.",
+          idSchema("A field slug."),
+        ),
         sort: s.array(
           "SmartSuite sort directives in the order they should be applied.",
           dynamicObjectSchema("A SmartSuite sort directive."),
         ),
         filter: dynamicObjectSchema("A SmartSuite group filter using the official filter syntax."),
       },
-      { optional: ["offset", "limit", "includeDeleted", "all", "hydrated", "sort", "filter"] },
+      { optional: ["offset", "limit", "includeDeleted", "all", "hydrated", "fields", "sort", "filter"] },
     ),
     outputSchema: s.object("A page of SmartSuite records.", {
       total: s.nonNegativeInteger("The total number of matching records."),
@@ -174,13 +178,17 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
         includeDeleted: s.boolean("Whether to include records marked as deleted."),
         all: s.boolean("Compatibility alias for includeDeleted."),
         hydrated: s.boolean("Whether to include human-readable labels for supported field types."),
+        fields: s.array(
+          "Optional field slugs to project into the read-only record response.",
+          idSchema("A field slug."),
+        ),
         sort: s.array(
           "SmartSuite sort directives in the order they should be applied.",
           dynamicObjectSchema("A SmartSuite sort directive."),
         ),
         filter: dynamicObjectSchema("A required SmartSuite group filter using the official filter syntax."),
       },
-      { optional: ["offset", "limit", "includeDeleted", "all", "hydrated", "sort"] },
+      { optional: ["offset", "limit", "includeDeleted", "all", "hydrated", "fields", "sort"] },
     ),
     outputSchema: s.object("A page of SmartSuite records.", {
       total: s.nonNegativeInteger("The total number of matching records."),
