@@ -216,6 +216,25 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         ),
       };
     }
+    case "bulk_create_records": {
+      requireReplicaWorkspace(workspaceId, "bulk_create_records");
+      const tableId = readRequiredString(input.input.tableId, "tableId");
+      const records = requireArray(input.input.records, "records");
+      if (records.length < 1 || records.length > 25) {
+        throw new ProviderRequestError(400, "SmartSuite bulk record creation accepts 1 to 25 records");
+      }
+      return {
+        records: requireArray(
+          await request({
+            path: `/applications/${encodeURIComponent(tableId)}/records/bulk/`,
+            method: "POST",
+            body: jsonObject({ items: records.map((record) => requireInputObject(record, "record")) }),
+            maxResponseBytes: smartsuiteMetadataMaxResponseBytes,
+          }),
+          "created records",
+        ),
+      };
+    }
     case "update_record": {
       requireReplicaWorkspace(workspaceId, "update_record");
       const { tableId, recordId } = readRecordIdentity(input.input);

@@ -228,6 +228,23 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     }),
   }),
   defineProviderAction(service, {
+    name: "bulk_create_records",
+    description:
+      "Temporarily create up to 25 records in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
+    requiredScopes: [],
+    inputSchema: s.requiredObject("Defines the SmartSuite replica records to create.", {
+      tableId: recordIdentityInputFields.tableId,
+      records: s.array(
+        "Record values keyed by SmartSuite Table field slug.",
+        dynamicObjectSchema("A SmartSuite replica record to create."),
+        { minItems: 1, maxItems: 25 },
+      ),
+    }),
+    outputSchema: s.requiredObject("The created SmartSuite replica records.", {
+      records: s.array("The created records.", dynamicRecordSchema),
+    }),
+  }),
+  defineProviderAction(service, {
     name: "update_record",
     description:
       "Temporarily update fields on a record in the se4hznb4 SmartSuite replica only. This migration action must not be used with a CF source workspace.",
