@@ -188,7 +188,7 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
       limit: s.nonNegativeInteger("The response page limit."),
       records: s.array("The records returned for this page.", dynamicRecordSchema),
     }),
-    followUpActions: ["smartsuite.get_record", "smartsuite.update_record"],
+    followUpActions: ["smartsuite.get_record"],
   }),
   defineProviderAction(service, {
     name: "get_record",
@@ -204,41 +204,6 @@ export const smartsuiteActions: readonly ActionDefinition[] = [
     ),
     outputSchema: s.object("The requested SmartSuite record.", {
       record: dynamicRecordSchema,
-    }),
-    followUpActions: ["smartsuite.update_record"],
-  }),
-  defineProviderAction(service, {
-    name: "create_record",
-    description: "Create a record in a SmartSuite Table using its field slugs.",
-    requiredScopes: [],
-    inputSchema: s.object("Defines the SmartSuite record to create.", {
-      tableId: recordIdentityInputFields.tableId,
-      fields: dynamicObjectSchema("Record values keyed by SmartSuite Table field slug."),
-    }),
-    outputSchema: s.object("The created SmartSuite record.", {
-      record: dynamicRecordSchema,
-    }),
-  }),
-  defineProviderAction(service, {
-    name: "update_record",
-    description: "Partially update fields on a SmartSuite record without clearing omitted fields.",
-    requiredScopes: [],
-    inputSchema: s.object("Defines the SmartSuite record fields to update.", {
-      ...recordIdentityInputFields,
-      fields: dynamicObjectSchema("Record values keyed by SmartSuite Table field slug."),
-    }),
-    outputSchema: s.object("The updated SmartSuite record.", {
-      record: dynamicRecordSchema,
-    }),
-    followUpActions: ["smartsuite.get_record"],
-  }),
-  defineProviderAction(service, {
-    name: "delete_record",
-    description: "Delete one record from a SmartSuite Table.",
-    requiredScopes: [],
-    inputSchema: s.object("Identifies the SmartSuite record to delete.", recordIdentityInputFields),
-    outputSchema: s.object("Confirms that the SmartSuite record was deleted.", {
-      deleted: s.boolean("Whether the record deletion succeeded."),
     }),
   }),
 ];

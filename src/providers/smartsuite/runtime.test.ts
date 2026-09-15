@@ -7,6 +7,14 @@ const apiKey = "smartsuite-secret-api-key";
 const workspaceId = "workspace-secret-id";
 
 describe("SmartSuite compatibility runtime", () => {
+  it("does not expose SmartSuite record write actions", () => {
+    const actionNames = smartsuiteActions.map((action) => action.name);
+
+    expect(actionNames).not.toContain("create_record");
+    expect(actionNames).not.toContain("update_record");
+    expect(actionNames).not.toContain("delete_record");
+  });
+
   it("reads complete table metadata with a GET and exposes normalized fields", async () => {
     expect(smartsuiteActions.map((action) => action.name)).toContain("get_table_metadata");
     const fetchMock = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {

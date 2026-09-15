@@ -199,41 +199,6 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         ),
       };
     }
-    case "create_record": {
-      const tableId = readRequiredString(input.input.tableId, "tableId");
-      return {
-        record: requireObject(
-          await request({
-            path: `/applications/${encodeURIComponent(tableId)}/records/`,
-            method: "POST",
-            body: requireInputObject(input.input.fields, "fields"),
-          }),
-          "record",
-        ),
-      };
-    }
-    case "update_record": {
-      const { tableId, recordId } = readRecordIdentity(input.input);
-      return {
-        record: requireObject(
-          await request({
-            path: `/applications/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}/`,
-            method: "PATCH",
-            body: requireInputObject(input.input.fields, "fields"),
-          }),
-          "record",
-        ),
-      };
-    }
-    case "delete_record": {
-      const { tableId, recordId } = readRecordIdentity(input.input);
-      await request({
-        path: `/applications/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}/`,
-        method: "DELETE",
-        allowEmpty: true,
-      });
-      return { deleted: true };
-    }
   }
 }
 
@@ -442,12 +407,6 @@ function readRecordIdentity(input: Record<string, unknown>) {
     tableId: readRequiredString(input.tableId, "tableId"),
     recordId: readRequiredString(input.recordId, "recordId"),
   };
-}
-
-function requireInputObject(value: unknown, field: string) {
-  const object = optionalRecord(value);
-  if (!object) throw new ProviderRequestError(400, `SmartSuite requires ${field} object`);
-  return object;
 }
 
 function requireObject(value: unknown, label: string) {
