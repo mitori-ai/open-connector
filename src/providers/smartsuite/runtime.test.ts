@@ -1,12 +1,84 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderRequestError } from "../provider-runtime.ts";
 import { smartsuiteActions } from "./actions.ts";
+import { configureSmartsuiteRecordResponseLimit } from "./config.ts";
 import { executeSmartsuiteAction } from "./runtime.ts";
 
 const apiKey = "smartsuite-secret-api-key";
 const workspaceId = "workspace-secret-id";
 
 describe("SmartSuite compatibility runtime", () => {
+  afterEach(() => {
+    configureSmartsuiteRecordResponseLimit(undefined);
+  });
+
+  it.each(["list_records", "search_records"])("accepts %s pages larger than 1 MiB by default", async (actionName) => {
+    const record = { id: "record-1", description: "x".repeat(2 * 1024 * 1024) };
+    const fetcher = vi.fn(async (_request: RequestInfo | URL) =>
+      Response.json({ items: [record], total: 1, offset: 0, limit: 1000 }),
+    );
+
+    const result = await executeSmartsuiteAction(
+      { apiKey, values: { workspaceId }, actionName, input: { tableId: "table-1", limit: 1000, filter: {} } },
+      fetcher as typeof fetch,
+    );
+
+    expect(result).toEqual({ records: [record], total: 1, offset: 0, limit: 1000 });
+    expect(new URL(String(fetcher.mock.calls[0]?.[0])).searchParams.get("limit")).toBe("1000");
+  });
+
+  it("enforces the 20 MiB default against the declared response length", async () => {
+    const fetcher = vi.fn(
+      async () => new Response("{}", { headers: { "content-length": String(20 * 1024 * 1024 + 1) } }),
+    );
+    await expect(executeListRecords(fetcher as typeof fetch)).rejects.toMatchObject({
+      status: 413,
+      message: "SmartSuite response exceeds 20971520 bytes",
+    });
+  });
+
+  it("honors a larger configured limit", async () => {
+    configureSmartsuiteRecordResponseLimit(String(32 * 1024 * 1024));
+    const record = { id: "record-1", description: "x".repeat(21 * 1024 * 1024) };
+    const fetcher = vi.fn(async () => Response.json({ items: [record], total: 1, offset: 0, limit: 1000 }));
+    await expect(executeListRecords(fetcher as typeof fetch)).resolves.toMatchObject({ records: [record] });
+  });
+
+  it("cancels a streamed response when it exceeds the configured limit without a Content-Length header", async () => {
+    configureSmartsuiteRecordResponseLimit("32");
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(20)));
+      },
+      cancel,
+    });
+    const fetcher = vi.fn(async () => new Response(stream));
+    await expect(executeListRecords(fetcher as typeof fetch)).rejects.toMatchObject({
+      status: 413,
+      message: "SmartSuite response exceeds 32 bytes",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it.each(["", "0", "-1", "1.5", "Infinity", "NaN", "9007199254740992", "20MiB"])(
+    "rejects an invalid response limit %j",
+    (value) => {
+      expect(() => configureSmartsuiteRecordResponseLimit(value)).toThrow(
+        "OOMOL_CONNECT_SMARTSUITE_RECORD_MAX_RESPONSE_BYTES must be a positive safe integer",
+      );
+    },
+  );
+
+  it("keeps provider error bodies bounded to 1 MiB with a larger record limit", async () => {
+    configureSmartsuiteRecordResponseLimit(String(32 * 1024 * 1024));
+    const fetcher = vi.fn(async () => new Response("x".repeat(1024 * 1024 + 1), { status: 500 }));
+    await expect(executeListRecords(fetcher as typeof fetch)).rejects.toMatchObject({
+      status: 413,
+      message: "SmartSuite response exceeds 1048576 bytes",
+    });
+  });
+
   it("keeps search_records and the all compatibility input", async () => {
     expect(smartsuiteActions.map((action) => action.name)).toContain("search_records");
     const fetchMock = vi.fn(async (_request: RequestInfo | URL, _init?: RequestInit) =>
@@ -146,6 +218,13 @@ describe("SmartSuite compatibility runtime", () => {
     expect(error.message).toContain("exceeds 1048576 bytes");
   });
 });
+
+function executeListRecords(fetcher: typeof fetch): Promise<unknown> {
+  return executeSmartsuiteAction(
+    { apiKey, values: { workspaceId }, actionName: "list_records", input: { tableId: "table-1", limit: 1000 } },
+    fetcher,
+  );
+}
 
 function executeGetRecord(fetcher: typeof fetch): Promise<unknown> {
   return executeSmartsuiteAction(

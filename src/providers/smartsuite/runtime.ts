@@ -6,6 +6,7 @@ import {
   providerUserAgent,
   readProviderTextBody,
 } from "../provider-runtime.ts";
+import { getSmartsuiteRecordMaxResponseBytes } from "./config.ts";
 
 interface ApiKeyProviderActionInput {
   apiKey: string;
@@ -32,6 +33,7 @@ interface SmartsuiteRequestInput {
   body?: Record<string, unknown>;
   phase: "validate" | "execute";
   allowEmpty?: boolean;
+  maxResponseBytes?: number;
 }
 
 type SmartsuiteRequest = (
@@ -91,6 +93,7 @@ export async function executeSmartsuiteAction(input: SmartsuiteActionInput, fetc
         await request({
           path: `/applications/${encodeURIComponent(tableId)}/records/list/`,
           method: "POST",
+          maxResponseBytes: getSmartsuiteRecordMaxResponseBytes(),
           query: jsonObject({
             offset: stringifyOptionalInteger(optionalInteger(input.input.offset)),
             limit: stringifyOptionalInteger(optionalInteger(input.input.limit)),
@@ -290,7 +293,7 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
       signal: timeout.signal,
     });
-    const payload = await readPayload(response, input.allowEmpty === true);
+    const payload = await readPayload(response, input.allowEmpty === true, input.maxResponseBytes);
     if (!response.ok) {
       throw createSmartsuiteError(response, payload, input.phase, input.apiKey, input.workspaceId);
     }
@@ -318,8 +321,12 @@ async function requestSmartsuite(input: SmartsuiteRequestInput) {
   }
 }
 
-async function readPayload(response: Response, allowEmpty: boolean) {
-  const text = await readProviderTextBody(response, "SmartSuite response", smartsuiteMaxResponseBytes);
+async function readPayload(response: Response, allowEmpty: boolean, maxResponseBytes?: number) {
+  const text = await readProviderTextBody(
+    response,
+    "SmartSuite response",
+    response.ok ? (maxResponseBytes ?? smartsuiteMaxResponseBytes) : smartsuiteMaxResponseBytes,
+  );
   if (text.trim() === "") {
     if (allowEmpty || !response.ok) return null;
     throw invalidPayload("response did not include JSON");

@@ -40,6 +40,16 @@ OpenConnector is configured with environment variables.
 | `OOMOL_CONNECT_S3_SESSION_TOKEN`            | unset                     | Optional session token used with explicit S3 credentials.                                           |
 | `OOMOL_CONNECT_RUN_LIMIT`                   | `5000`                    | Maximum number of recent action run audit records to retain.                                        |
 
+SmartSuite `list_records` and `search_records` accept successful response bodies up to 20 MiB,
+allowing large pages of wide records. Set `OOMOL_CONNECT_SMARTSUITE_RECORD_MAX_RESPONSE_BYTES`
+to a positive safe integer byte count to override this limit, then restart the Node/Docker runtime
+or redeploy the Cloudflare Worker with the variable. Invalid values prevent runtime initialization.
+For example, `33554432` allows 32 MiB per response. The limit applies to decoded response bytes,
+including streamed responses without a `Content-Length` header. It does not change the maximum
+page size of 1,000 records or the 30-second SmartSuite request timeout. Other SmartSuite requests
+and provider error bodies retain their existing limits. Larger limits increase memory use per
+concurrent read; JSON parsing and hydration require additional memory beyond the response bytes.
+
 Example:
 
 ```bash
