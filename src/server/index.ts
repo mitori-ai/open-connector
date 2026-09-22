@@ -15,6 +15,7 @@ import {
 } from "../core/request.ts";
 import { ProviderLoader } from "../providers/provider-loader.ts";
 import { executorModules } from "../providers/registry.generated.ts";
+import { configureSmartsuiteRecordResponseLimit } from "../providers/smartsuite/config.ts";
 import { createRuntimeJwtVerifier } from "./api/runtime-jwt.ts";
 import { registerStaticRoutes } from "./api/static-routes.ts";
 import { createConnectApp } from "./connect-app.ts";
@@ -45,6 +46,7 @@ try {
 }
 
 async function main(): Promise<void> {
+  configureSmartsuiteRecordResponseLimit(process.env.OOMOL_CONNECT_SMARTSUITE_RECORD_MAX_RESPONSE_BYTES);
   setPrivateNetworkAccessAllowed(parsePrivateNetworkAccessFlag(process.env.OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK));
   setEgressTrustedHosts(parseEgressTrustedHosts(process.env.OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS));
 

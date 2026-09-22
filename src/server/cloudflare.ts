@@ -14,6 +14,7 @@ import {
 } from "../core/request.ts";
 import { ProviderLoader } from "../providers/provider-loader.ts";
 import { executorModules } from "../providers/registry.cloudflare.generated.ts";
+import { configureSmartsuiteRecordResponseLimit } from "../providers/smartsuite/config.ts";
 import { isConsoleShellPath } from "./api/console-paths.ts";
 import { loadCatalogFromAssets } from "./cloudflare/catalog-assets.ts";
 import { readPositiveInteger, resolvePublicOrigin } from "./cloudflare/cloudflare-env.ts";
@@ -36,6 +37,7 @@ const appCache = new IsolatePromiseCache<ConnectApp>();
 
 export default {
   async fetch(request: Request, env: CloudflareEnv, _ctx: CloudflareExecutionContext): Promise<Response> {
+    configureSmartsuiteRecordResponseLimit(env.OOMOL_CONNECT_SMARTSUITE_RECORD_MAX_RESPONSE_BYTES);
     setPrivateNetworkAccessAllowed(parsePrivateNetworkAccessFlag(env.OOMOL_CONNECT_ALLOW_PRIVATE_NETWORK));
     setEgressTrustedHosts(parseEgressTrustedHosts(env.OOMOL_CONNECT_EGRESS_TRUSTED_HOSTS));
     const publicOrigin = resolvePublicOrigin(request, env);
