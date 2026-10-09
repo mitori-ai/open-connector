@@ -146,3 +146,54 @@ describe("Airspace provider runtime", () => {
     ).rejects.toMatchObject({ status: 400, message: "environment must be production or test" });
   });
 });
+
+describe("Airspace existing quote reads", () => {
+  const quote = {
+    estimated_cost: { amount: "359.56", currency: "USD" },
+    estimated_delivery_time: "2026-10-12T18:00:00.000Z",
+    order_details: { tracking_id: "AT123", order_number: 72, status: "pending", company_id: "CF1" },
+  };
+
+  it("reads a quote without creating an order or inventing expiry", async () => {
+    const fetcher = vi.fn(async () => Response.json({ quote }));
+    const result = await airspaceActionHandlers.get_quote({ trackingId: "AT123" }, context(fetcher));
+    expect(result).toMatchObject({
+      quote: {
+        estimatedCost: { amount: "359.56", currency: "USD" },
+        expiresAt: null,
+        orderDetails: { trackingId: "AT123", companyId: "CF1", status: "pending" },
+      },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, init] = fetcher.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe("https://apitest.airspace.com/api/public/v3/orders/quotes/AT123");
+    expect(init.method).toBe("GET");
+  });
+
+  it("supports lookup by exact order number", async () => {
+    const fetcher = vi.fn(async () => Response.json({ quote }));
+    await expect(airspaceActionHandlers.get_quote({ trackingId: "72" }, context(fetcher))).resolves.toMatchObject({
+      quote: { orderDetails: { trackingId: "AT123" } },
+    });
+  });
+
+  it("rejects wrong quote identity and missing quote bodies", async () => {
+    const fetcher = vi.fn(async () => Response.json({ quote }));
+    await expect(airspaceActionHandlers.get_quote({ trackingId: "AT999" }, context(fetcher))).rejects.toThrow(
+      "identity does not match",
+    );
+    await expect(
+      airspaceActionHandlers.get_quote(
+        { trackingId: "AT123" },
+        context(async () => Response.json({})),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("keeps absent cost and currency unknown", async () => {
+    const fetcher = vi.fn(async () => Response.json({ quote: { order_details: quote.order_details } }));
+    await expect(airspaceActionHandlers.get_quote({ trackingId: "AT123" }, context(fetcher))).resolves.toMatchObject({
+      quote: { estimatedCost: { amount: null, currency: null }, estimatedDeliveryTime: null },
+    });
+  });
+});

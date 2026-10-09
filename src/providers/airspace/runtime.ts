@@ -63,6 +63,34 @@ const orderStatuses = new Set([
 ]);
 
 export const airspaceActionHandlers: Record<AirspaceActionName, ProviderRuntimeHandler<AirspaceContext>> = {
+  async get_quote(input, context) {
+    const trackingId = readTrackingId(input.trackingId);
+    const payload = await airspaceRequest({
+      ...context,
+      path: `/orders/quotes/${encodeURIComponent(trackingId)}`,
+      phase: "execute",
+    });
+    const quote = requireObject(requireObject(payload, "Airspace quote response").quote, "Airspace quote");
+    const orderDetails = normalizeOrder(quote.order_details);
+    if (
+      orderDetails.trackingId !== trackingId &&
+      !(typeof orderDetails.orderNumber === "number" && String(orderDetails.orderNumber) === trackingId)
+    ) {
+      throw new ProviderRequestError(502, "Airspace quote identity does not match the requested reference");
+    }
+    const cost = optionalRecord(quote.estimated_cost);
+    return {
+      quote: {
+        estimatedCost: {
+          amount: optionalScalarString(cost?.amount) ?? null,
+          currency: optionalString(cost?.currency) ?? null,
+        },
+        estimatedDeliveryTime: optionalString(quote.estimated_delivery_time) ?? null,
+        expiresAt: null,
+        orderDetails,
+      },
+    };
+  },
   async list_orders(input, context) {
     const payload = await airspaceRequest({
       ...context,

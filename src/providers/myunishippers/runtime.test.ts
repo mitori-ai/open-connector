@@ -82,3 +82,72 @@ describe("myUnishippers tracking provider", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+describe("myUnishippers batch tracking", () => {
+  it("encodes commas and preserves separate results in requested order", async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        results: [
+          { identifier: "TWO", shipment: null, error: "Shipment not found" },
+          { identifier: "ONE", shipment: { trackingNumber: "ONE", status: { current: "Delivered" } }, error: null },
+        ],
+      }),
+    );
+    const result = await myUnishippersActionHandlers.track_shipments({ trackingNumbers: ["ONE", "TWO"] }, { fetcher });
+    expect(String((fetcher.mock.calls[0] as unknown as [URL])[0])).toBe(
+      "https://track.myunishippers.com/api/track/ONE%2CTWO",
+    );
+    expect(result).toMatchObject({
+      results: [
+        { trackingNumber: "ONE", shipment: { trackingNumber: "ONE" }, error: null },
+        { trackingNumber: "TWO", shipment: null, error: "Shipment not found" },
+      ],
+    });
+  });
+
+  it("supports a single flat shipment response", async () => {
+    const fetcher = vi.fn(async () => Response.json({ trackingNumber: "ONE", status: { current: "Delivered" } }));
+    await expect(
+      myUnishippersActionHandlers.track_shipments({ trackingNumbers: ["ONE"] }, { fetcher }),
+    ).resolves.toMatchObject({ results: [{ trackingNumber: "ONE", error: null }] });
+  });
+
+  it("rejects invalid batches before fetching", async () => {
+    const fetcher = vi.fn();
+    for (const trackingNumbers of [
+      [],
+      Array.from({ length: 26 }, (_, i) => String(i)),
+      ["ONE", "one"],
+      ["ONE,TWO"],
+      ["ONE TWO"],
+    ]) {
+      await expect(myUnishippersActionHandlers.track_shipments({ trackingNumbers }, { fetcher })).rejects.toMatchObject(
+        { status: 400 },
+      );
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("does not accept missing, duplicated, or mismatched results", async () => {
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        results: [
+          { identifier: "ONE", shipment: { trackingNumber: "OTHER", status: { current: "Delivered" } } },
+          { identifier: "TWO", shipment: {} },
+          { identifier: "TWO", shipment: {} },
+        ],
+      }),
+    );
+    const result = await myUnishippersActionHandlers.track_shipments(
+      { trackingNumbers: ["ONE", "TWO", "THREE"] },
+      { fetcher },
+    );
+    expect(result).toMatchObject({
+      results: [
+        { shipment: null, error: "myUnishippers returned a different tracking number" },
+        { shipment: null, error: "myUnishippers result is missing or duplicated" },
+        { shipment: null, error: "myUnishippers result is missing or duplicated" },
+      ],
+    });
+  });
+});
