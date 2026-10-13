@@ -5,7 +5,7 @@ import { airspaceActions } from "./actions.ts";
 export const provider: ProviderDefinition = {
   service: "airspace",
   displayName: "Airspace",
-  description: "Monitor Airspace orders and shipment events through the official v3 API.",
+  description: "Read Airspace orders, shipment events, and existing quotes through the official v3 API.",
   categories: ["Logistics", "Data"],
   authTypes: ["api_key"],
   auth: [

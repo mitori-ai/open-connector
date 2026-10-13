@@ -95,9 +95,26 @@ const orderStatuses = [
   "admin_canceled",
 ] as const;
 
-export type AirspaceActionName = "list_orders" | "get_order" | "get_order_events";
+export type AirspaceActionName = "list_orders" | "get_order" | "get_order_events" | "get_quote";
 
 export const airspaceActions: ActionDefinition[] = [
+  defineProviderAction(service, {
+    name: "get_quote",
+    description:
+      "Read an existing Airspace quote. This does not create a quote, book a shipment, or list alternative flights.",
+    inputSchema: s.requiredObject("The existing quote lookup.", { trackingId }),
+    outputSchema: s.requiredObject("An estimated quote with provider order details.", {
+      quote: s.requiredObject("An existing Airspace quote, not a booking confirmation.", {
+        estimatedCost: s.requiredObject("The estimated price; missing amounts remain unknown.", {
+          amount: s.nullableString("The estimated decimal amount."),
+          currency: s.nullableString("The price currency."),
+        }),
+        estimatedDeliveryTime: nullableDateTime("The estimated door-to-door delivery time."),
+        expiresAt: nullableDateTime("Unknown unless Airspace supplies an expiry; currently null."),
+        orderDetails: orderSchema,
+      }),
+    }),
+  }),
   defineProviderAction(service, {
     name: "list_orders",
     description: "List Airspace orders with bounded pagination and documented shipment filters.",

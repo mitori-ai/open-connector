@@ -34,6 +34,44 @@ export const myUnishippersActionHandlers: Record<
     const payload = await requestMyUnishippers(trackingNumber, context);
     return normalizeShipment(payload, trackingNumber);
   },
+  async track_shipments(input, context) {
+    if (
+      !Array.isArray(input.trackingNumbers) ||
+      input.trackingNumbers.length < 1 ||
+      input.trackingNumbers.length > 25
+    ) {
+      throw new ProviderRequestError(400, "trackingNumbers must contain 1 to 25 numbers");
+    }
+    const numbers = input.trackingNumbers.map(readTrackingNumber);
+    if (new Set(numbers.map((number) => number.toUpperCase())).size !== numbers.length) {
+      throw new ProviderRequestError(400, "trackingNumbers must be distinct");
+    }
+    const payload = await requestMyUnishippers(numbers.join(","), context);
+    const root = requireObject(payload, "myUnishippers batch response");
+    const entries = Array.isArray(root.results)
+      ? root.results
+      : numbers.length === 1
+        ? [{ identifier: numbers[0], shipment: payload, error: null }]
+        : [];
+    return {
+      results: numbers.map((trackingNumber) => {
+        try {
+          const matches = entries
+            .map(optionalRecord)
+            .filter((entry) => optionalString(entry?.identifier)?.toUpperCase() === trackingNumber.toUpperCase());
+          if (matches.length !== 1)
+            throw new ProviderRequestError(502, "myUnishippers result is missing or duplicated");
+          const entry = matches[0]!;
+          const error = optionalString(entry.error);
+          if (error) throw new ProviderRequestError(400, error);
+          return { trackingNumber, shipment: normalizeShipment(entry.shipment, trackingNumber), error: null };
+        } catch (error) {
+          if (!(error instanceof ProviderRequestError)) throw error;
+          return { trackingNumber, shipment: null, error: error.message };
+        }
+      }),
+    };
+  },
 };
 
 async function requestMyUnishippers(trackingNumber: string, context: MyUnishippersContext): Promise<unknown> {
@@ -122,7 +160,7 @@ function normalizeShipment(payload: unknown, requestedTrackingNumber: string): R
 
 function readTrackingNumber(value: unknown): string {
   const trackingNumber = optionalString(value);
-  if (!trackingNumber || trackingNumber.length > 200 || /[,/?#]/.test(trackingNumber)) {
+  if (!trackingNumber || trackingNumber.length > 200 || /[,/?#\s]/.test(trackingNumber)) {
     throw new ProviderRequestError(400, "trackingNumber must be one exact path-safe tracking number");
   }
   return trackingNumber;

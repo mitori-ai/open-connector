@@ -23,7 +23,18 @@ const timelineEventSchema = s.object("One event in the shipment tracking history
   isVoided: s.boolean("Whether this event marks the shipment as voided."),
 });
 
-export type MyUnishippersActionName = "track_shipment";
+const shipmentSchema = s.object("A normalized myUnishippers tracking response.", {
+  id: s.nullableString("The shipment identifier returned by myUnishippers."),
+  trackingNumber: s.nonEmptyString("The shipment tracking number."),
+  bolNumber: s.nullableString("The bill-of-lading number."),
+  proNumber: s.nullableString("The carrier PRO number."),
+  carrier: carrierSchema,
+  status: statusSchema,
+  timeline: s.array("The shipment tracking history.", timelineEventSchema),
+  trackingUrl: s.url("The public myUnishippers tracking page."),
+});
+
+export type MyUnishippersActionName = "track_shipment" | "track_shipments";
 
 export const myUnishippersActions: ActionDefinition[] = [
   defineProviderAction("myunishippers", {
@@ -37,15 +48,32 @@ export const myUnishippersActions: ActionDefinition[] = [
         pattern: "^[^,/?#]+$",
       }),
     }),
-    outputSchema: s.object("A normalized myUnishippers tracking response.", {
-      id: s.nullableString("The shipment identifier returned by myUnishippers."),
-      trackingNumber: s.nonEmptyString("The shipment tracking number."),
-      bolNumber: s.nullableString("The bill-of-lading number."),
-      proNumber: s.nullableString("The carrier PRO number."),
-      carrier: carrierSchema,
-      status: statusSchema,
-      timeline: s.array("The shipment tracking history.", timelineEventSchema),
-      trackingUrl: s.url("The public myUnishippers tracking page."),
+    outputSchema: shipmentSchema,
+  }),
+  defineProviderAction("myunishippers", {
+    name: "track_shipments",
+    description: "Track up to 25 exact tracking numbers in one public request.",
+    inputSchema: s.requiredObject("The shipments to track.", {
+      trackingNumbers: s.array(
+        "Distinct tracking numbers.",
+        s.string({
+          minLength: 1,
+          maxLength: 200,
+          pattern: "^[^,/?#\\s]+$",
+        }),
+        { minItems: 1, maxItems: 25, uniqueItems: true },
+      ),
+    }),
+    outputSchema: s.requiredObject("Results in requested order, with separate shipment errors.", {
+      results: s.array(
+        "One result per requested number.",
+        s.requiredObject("A shipment result.", {
+          trackingNumber: s.nonEmptyString("The requested tracking number."),
+          shipment: s.nullable(shipmentSchema),
+          error: s.nullableString("The shipment error, if any."),
+        }),
+        { minItems: 1, maxItems: 25 },
+      ),
     }),
   }),
 ];
